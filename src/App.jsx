@@ -241,6 +241,10 @@ const db = {
 function useStore() {
   const [state, setState] = useState({ clienti: [], slots: [], bookings: [], schede: [] });
   const [loading, setLoading] = useState(true);
+  // finestra di protezione: dopo una scrittura locale, ignora i reload
+  // realtime per un attimo, così non sovrascrivono ciò che abbiamo appena fatto
+  const writingUntil = useRef(0);
+  const markWrite = () => { writingUntil.current = Date.now() + 2500; };
 
   const reload = useCallback(async () => {
     const data = await db.loadAll();
@@ -248,11 +252,21 @@ function useStore() {
     setLoading(false);
   }, []);
 
+  const reloadSafe = useCallback(async () => {
+    if (Date.now() < writingUntil.current) return; // scrittura in corso: non sovrascrivere
+    const data = await db.loadAll();
+    setState(data);
+  }, []);
+
   useEffect(() => {
     reload();
-    const unsub = db.subscribe(() => { reload(); });
-    return unsub;
-  }, [reload]);
+    const unsub = db.subscribe(() => { reloadSafe(); });
+    // aggiorna quando la app torna in primo piano (utile su telefono)
+    const onFocus = () => reloadSafe();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => { unsub(); window.removeEventListener("focus", onFocus); document.removeEventListener("visibilitychange", onFocus); };
+  }, [reload, reloadSafe]);
 
   const api = useMemo(() => ({
     state,
@@ -261,6 +275,7 @@ function useStore() {
     // ── clienti ──
     addCliente: (data) => {
       const c = makeCliente(data);
+      markWrite();
       setState((s) => ({ ...s, clienti: [...s.clienti, c] }));
       db.insertCliente(c);
       return c.id;
@@ -270,15 +285,18 @@ function useStore() {
       const nome = parts.shift() || fullName.trim();
       const cognome = parts.join(" ");
       const c = makeCliente({ nome, cognome });
+      markWrite();
       setState((s) => ({ ...s, clienti: [...s.clienti, c] }));
       db.insertCliente(c);
       return c.id;
     },
     updateCliente: (id, patch) => {
+      markWrite();
       setState((s) => ({ ...s, clienti: s.clienti.map((c) => (c.id === id ? { ...c, ...patch } : c)) }));
       db.updateCliente(id, patch);
     },
     removeCliente: (id) => {
+      markWrite();
       setState((s) => ({ ...s, clienti: s.clienti.filter((c) => c.id !== id) }));
       db.deleteCliente(id);
     },
@@ -287,6 +305,7 @@ function useStore() {
     addSlot: (data) => {
       const slot = makeSlot(data);
       let dup = false;
+      markWrite();
       setState((s) => {
         if (s.slots.find((x) => x.day === slot.day && x.time === slot.time)) { dup = true; return s; }
         return { ...s, slots: [...s.slots, slot] };
@@ -295,11 +314,13 @@ function useStore() {
       return slot;
     },
     updateSlot: (id, patch) => {
+      markWrite();
       setState((s) => ({ ...s, slots: s.slots.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
       db.updateSlot(id, patch);
     },
     removeSlot: (id) => {
       let blocked = false;
+      markWrite();
       setState((s) => {
         if (s.bookings.some((b) => b.slotId === id)) { blocked = true; return s; }
         return { ...s, slots: s.slots.filter((x) => x.id !== id) };
@@ -310,19 +331,23 @@ function useStore() {
     // ── bookings ──
     addBooking: (data) => {
       const b = makeBooking(data);
+      markWrite();
       setState((s) => ({ ...s, bookings: [...s.bookings, b] }));
       db.insertBooking(b);
       return b.id;
     },
     updateBooking: (id, patch) => {
+      markWrite();
       setState((s) => ({ ...s, bookings: s.bookings.map((b) => (b.id === id ? { ...b, ...patch } : b)) }));
       db.updateBooking(id, patch);
     },
     removeBooking: (id) => {
+      markWrite();
       setState((s) => ({ ...s, bookings: s.bookings.filter((b) => b.id !== id) }));
       db.deleteBooking(id);
     },
     moveBooking: (bookingId, newSlotId) => {
+      markWrite();
       setState((s) => ({ ...s, bookings: s.bookings.map((b) => (b.id === bookingId ? { ...b, slotId: newSlotId } : b)) }));
       db.updateBooking(bookingId, { slotId: newSlotId });
     },
@@ -330,15 +355,18 @@ function useStore() {
     // ── schede ──
     addScheda: (data) => {
       const sc = makeScheda(data);
+      markWrite();
       setState((s) => ({ ...s, schede: [...(s.schede || []), sc] }));
       db.insertScheda(sc);
       return sc.id;
     },
     updateScheda: (id, patch) => {
+      markWrite();
       setState((s) => ({ ...s, schede: (s.schede || []).map((x) => (x.id === id ? { ...x, ...patch, updatedAt: new Date().toISOString() } : x)) }));
       db.updateScheda(id, patch);
     },
     removeScheda: (id) => {
+      markWrite();
       setState((s) => ({ ...s, schede: (s.schede || []).filter((x) => x.id !== id) }));
       db.deleteScheda(id);
     },
@@ -352,6 +380,7 @@ function useStore() {
         nome: nome || src.nome,
         esercizi: src.esercizi.map((e) => makeEsercizio({ ...e, id: undefined })),
       });
+      markWrite();
       setState((s) => ({ ...s, schede: [...(s.schede || []), copy] }));
       db.insertScheda(copy);
       return copy.id;
