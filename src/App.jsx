@@ -1,4 +1,3 @@
-// build markWrite v3 forza
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 
@@ -172,6 +171,27 @@ const rowToScheda  = (r) => ({ id: r.id, clienteId: r.cliente_id, nome: r.nome, 
 const rowToCliente = (r) => ({ id: r.id, nome: r.nome, cognome: r.cognome || "", telefono: r.telefono || "", email: r.email || "", note: r.note || "", createdAt: r.created_at });
 const rowToSlot    = (r) => ({ id: r.id, day: r.day, time: r.time, durata: r.durata, posti: r.posti, tipo: r.tipo || "gruppo", createdAt: r.created_at });
 
+// Segnalatore di errori: se una scrittura fallisce, lo mostra a schermo
+// invece di fallire in silenzio (era il motivo per cui non vedevamo nulla).
+let onDbError = null;
+const setDbErrorHandler = (fn) => { onDbError = fn; };
+
+const run = async (etichetta, promessa) => {
+  try {
+    const { error } = await promessa;
+    if (error) {
+      console.error("[WFY] errore " + etichetta + ":", error);
+      if (onDbError) onDbError(etichetta + ": " + (error.message || "errore sconosciuto"));
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("[WFY] eccezione " + etichetta + ":", e);
+    if (onDbError) onDbError(etichetta + ": " + (e.message || "errore di rete"));
+    return false;
+  }
+};
+
 const db = {
   async loadAll() {
     const [c, s, b, sc] = await Promise.all([
@@ -180,6 +200,7 @@ const db = {
       supabase.from("bookings").select("*"),
       supabase.from("schede").select("*"),
     ]);
+    if (c.error) { console.error("[WFY] errore lettura clienti:", c.error); if (onDbError) onDbError("lettura: " + c.error.message); }
     return {
       clienti: (c.data || []).map(rowToCliente),
       slots: (s.data || []).map(rowToSlot),
@@ -189,28 +210,28 @@ const db = {
   },
 
   // clienti
-  insertCliente: (c) => supabase.from("clienti").insert({ id: c.id, nome: c.nome, cognome: c.cognome, telefono: c.telefono, email: c.email, note: c.note }),
-  updateCliente: (id, p) => supabase.from("clienti").update(p).eq("id", id),
-  deleteCliente: (id) => supabase.from("clienti").delete().eq("id", id),
+  insertCliente: (c) => run("salva cliente", supabase.from("clienti").insert({ id: c.id, nome: c.nome, cognome: c.cognome, telefono: c.telefono, email: c.email, note: c.note })),
+  updateCliente: (id, p) => run("aggiorna cliente", supabase.from("clienti").update(p).eq("id", id)),
+  deleteCliente: (id) => run("elimina cliente", supabase.from("clienti").delete().eq("id", id)),
 
   // slots
-  insertSlot: (s) => supabase.from("slots").insert({ id: s.id, day: s.day, time: s.time, durata: s.durata, posti: s.posti, tipo: s.tipo }),
-  updateSlot: (id, p) => supabase.from("slots").update(p).eq("id", id),
-  deleteSlot: (id) => supabase.from("slots").delete().eq("id", id),
+  insertSlot: (s) => run("salva sessione", supabase.from("slots").insert({ id: s.id, day: s.day, time: s.time, durata: s.durata, posti: s.posti, tipo: s.tipo })),
+  updateSlot: (id, p) => run("aggiorna sessione", supabase.from("slots").update(p).eq("id", id)),
+  deleteSlot: (id) => run("elimina sessione", supabase.from("slots").delete().eq("id", id)),
 
   // bookings
-  insertBooking: (b) => supabase.from("bookings").insert({ id: b.id, slot_id: b.slotId, cliente_id: (b.clienteId && !String(b.clienteId).startsWith("guest_")) ? b.clienteId : null, cliente_name: b.clienteName, nota: b.nota, stato: b.stato }),
+  insertBooking: (b) => run("salva prenotazione", supabase.from("bookings").insert({ id: b.id, slot_id: b.slotId, cliente_id: (b.clienteId && !String(b.clienteId).startsWith("guest_")) ? b.clienteId : null, cliente_name: b.clienteName, nota: b.nota, stato: b.stato })),
   updateBooking: (id, p) => {
     const patch = {};
     if ("nota" in p) patch.nota = p.nota;
     if ("stato" in p) patch.stato = p.stato;
     if ("slotId" in p) patch.slot_id = p.slotId;
-    return supabase.from("bookings").update(patch).eq("id", id);
+    return run("aggiorna prenotazione", supabase.from("bookings").update(patch).eq("id", id));
   },
-  deleteBooking: (id) => supabase.from("bookings").delete().eq("id", id),
+  deleteBooking: (id) => run("elimina prenotazione", supabase.from("bookings").delete().eq("id", id)),
 
   // schede
-  insertScheda: (sc) => supabase.from("schede").insert({ id: sc.id, cliente_id: sc.clienteId, nome: sc.nome, note: sc.note, esercizi: sc.esercizi }),
+  insertScheda: (sc) => run("salva scheda", supabase.from("schede").insert({ id: sc.id, cliente_id: sc.clienteId, nome: sc.nome, note: sc.note, esercizi: sc.esercizi })),
   updateScheda: (id, p) => {
     const patch = {};
     if ("nome" in p) patch.nome = p.nome;
@@ -218,9 +239,9 @@ const db = {
     if ("esercizi" in p) patch.esercizi = p.esercizi;
     if ("clienteId" in p) patch.cliente_id = p.clienteId;
     patch.updated_at = new Date().toISOString();
-    return supabase.from("schede").update(patch).eq("id", id);
+    return run("aggiorna scheda", supabase.from("schede").update(patch).eq("id", id));
   },
-  deleteScheda: (id) => supabase.from("schede").delete().eq("id", id),
+  deleteScheda: (id) => run("elimina scheda", supabase.from("schede").delete().eq("id", id)),
 
   // realtime: richiama onChange a ogni modifica su qualunque tabella
   subscribe(onChange) {
@@ -397,7 +418,7 @@ function useToast() {
   const push = useCallback((msg, kind = "ok") => {
     const id = uid();
     setToasts((t) => [...t, { id, msg, kind }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2600);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "err" ? 8000 : 2600);
   }, []);
   return { toasts, push };
 }
@@ -499,7 +520,7 @@ const ToastHost = ({ toasts }) => (
   <div style={{ position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", gap: 8, zIndex: 300, alignItems: "center" }}>
     {toasts.map((t) => (
       <div key={t.id} style={{
-        background: t.kind === "err" ? C.ink : C.ink, color: t.kind === "err" ? C.red : C.yellow,
+        background: t.kind === "err" ? "#8B1A10" : C.ink, color: t.kind === "err" ? "#fff" : C.yellow,
         padding: "11px 18px", borderRadius: 12, fontFamily: FSANS, fontSize: 13, fontWeight: 600,
         boxShadow: "0 8px 30px rgba(0,0,0,.25)", animation: "wfy-toast .2s ease", maxWidth: "90vw",
       }}>{t.msg}</div>
@@ -597,7 +618,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v3-sync</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1312,6 +1333,9 @@ export default function App() {
   const [staff, setStaff] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [mobile, setMobile] = useState(typeof window !== "undefined" && window.innerWidth < 760);
+
+  // mostra a schermo gli errori di salvataggio invece di ingoiarli
+  useEffect(() => { setDbErrorHandler((msg) => push("⚠️ " + msg, "err")); }, [push]);
 
   useEffect(() => {
     const fn = () => setMobile(window.innerWidth < 760);
