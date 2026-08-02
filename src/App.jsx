@@ -267,6 +267,9 @@ function useStore() {
   // realtime per un attimo, così non sovrascrivono ciò che abbiamo appena fatto
   const writingUntil = useRef(0);
   const markWrite = () => { writingUntil.current = Date.now() + 2500; };
+  // riferimento sempre aggiornato allo stato (serve alla ricorrenza)
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
 
   const reload = useCallback(async () => {
     const data = await db.loadAll();
@@ -340,6 +343,69 @@ function useStore() {
       setState((s) => ({ ...s, slots: s.slots.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
       db.updateSlot(id, patch);
     },
+
+    // ── RICORRENZA ──
+    // Crea sessioni ripetute nei giorni scelti fino a dataFine.
+    // Regola d'oro: un giorno + un orario = UN SOLO slot (mai duplicati).
+    // Se clienteId è passato, iscrive anche il cliente a ogni sessione.
+    // Ritorna un riepilogo: create, riusate, saltate (slot pieni).
+    creaRicorrenza: ({ dal, dataFine, giorni, time, durata, posti, tipo, clienteId }) => {
+      const esito = { create: 0, riusate: 0, pieneSaltate: [], giaIscritto: 0, iscritti: 0 };
+      const nuoviSlot = [];
+      const nuoveBooking = [];
+
+      // fotografia dello stato attuale su cui ragionare
+      const slotsOra = [...stateRef.current.slots];
+      const bookingsOra = [...stateRef.current.bookings];
+
+      let g = dal;
+      let guardia = 0;
+      while (g <= dataFine && guardia < 400) {
+        guardia++;
+        const dow = new Date(g + "T00:00:00").getDay(); // 0=dom ... 6=sab
+        if (giorni.includes(dow)) {
+          // esiste già uno slot in quel giorno a quell'ora?
+          let slot = slotsOra.find((x) => x.day === g && x.time === time);
+          if (!slot) {
+            slot = makeSlot({ day: g, time, durata, posti, tipo });
+            slotsOra.push(slot);
+            nuoviSlot.push(slot);
+            esito.create++;
+          } else {
+            esito.riusate++;
+          }
+
+          if (clienteId) {
+            const occupati = bookingsOra.filter((b) => b.slotId === slot.id);
+            const gia = occupati.some((b) => b.clienteId === clienteId);
+            if (gia) {
+              esito.giaIscritto++;
+            } else if (occupati.length >= (slot.posti || MAX_POSTI)) {
+              esito.pieneSaltate.push(g); // slot pieno: il cliente salta questo giorno
+            } else {
+              const bk = makeBooking({ slotId: slot.id, clienteId });
+              bookingsOra.push(bk);
+              nuoveBooking.push(bk);
+              esito.iscritti++;
+            }
+          }
+        }
+        g = addDays(g, 1);
+      }
+
+      if (nuoviSlot.length || nuoveBooking.length) {
+        markWrite();
+        setState((s) => ({
+          ...s,
+          slots: [...s.slots, ...nuoviSlot],
+          bookings: [...s.bookings, ...nuoveBooking],
+        }));
+        nuoviSlot.forEach((sl) => db.insertSlot(sl));
+        nuoveBooking.forEach((bk) => db.insertBooking(bk));
+      }
+      return esito;
+    },
+
     removeSlot: (id) => {
       let blocked = false;
       markWrite();
@@ -618,7 +684,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v3-sync</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v4-ricorrenze</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -848,25 +914,44 @@ function CalendarPage({ store, toast }) {
         })}
       </div>
 
-      {/* ── Modal: nuova sessione ── */}
-      <NewSlotModal open={!!newSlotFor} day={newSlotFor} onClose={() => setNewSlotFor(null)}
-        onCreate={(data) => { store.addSlot(data); setNewSlotFor(null); toast("Sessione creata"); }} />
+      {/* ── Modal: nuova sessione (con ricorrenza) ── */}
+      <NewSlotModal open={!!newSlotFor} day={newSlotFor} clienti={state.clienti} onClose={() => setNewSlotFor(null)}
+        onCreate={(data) => { store.addSlot(data); setNewSlotFor(null); toast("Sessione creata"); }}
+        onRicorrenza={(cfg) => {
+          const r = store.creaRicorrenza(cfg);
+          setNewSlotFor(null);
+          const parti = [];
+          if (r.create) parti.push(`${r.create} sessioni create`);
+          if (r.riusate) parti.push(`${r.riusate} già esistenti`);
+          if (r.iscritti) parti.push(`${r.iscritti} iscrizioni`);
+          toast(parti.length ? "✓ " + parti.join(" · ") : "Nessuna modifica");
+          if (r.pieneSaltate.length) {
+            setTimeout(() => toast(`⚠️ Piene, cliente saltato: ${r.pieneSaltate.map(fmtShort).join(", ")}`, "err"), 400);
+          }
+        }} />
 
       {/* ── Modal: prenota su slot ── */}
       <BookingModal open={!!bookingFor} slot={bookingFor} clienti={state.clienti}
         onClose={() => setBookingFor(null)}
-        onConfirm={({ slotId, nota, scelta }) => {
-          let payload = { slotId, nota };
-          if (scelta.type === "cliente") {
-            payload.clienteId = scelta.id;
+        onConfirm={({ slotId, nota, scelta, fisso, fine }) => {
+          const clienteId = scelta.type === "cliente" ? scelta.id : store.createClienteQuick(scelta.name);
+          if (fisso && fine) {
+            const dow = new Date(bookingFor.day + "T00:00:00").getDay();
+            const r = store.creaRicorrenza({
+              dal: bookingFor.day, dataFine: fine, giorni: [dow],
+              time: bookingFor.time, durata: bookingFor.durata, posti: bookingFor.posti, tipo: bookingFor.tipo,
+              clienteId,
+            });
+            setBookingFor(null);
+            toast(`✓ Iscritto a ${r.iscritti} sessioni${r.create ? ` (${r.create} create)` : ""}`);
+            if (r.pieneSaltate.length) {
+              setTimeout(() => toast(`⚠️ Piene, saltate: ${r.pieneSaltate.map(fmtShort).join(", ")}`, "err"), 400);
+            }
           } else {
-            // nuovo cliente: lo creo nell'archivio e lo assegno
-            const id = store.createClienteQuick(scelta.name);
-            payload.clienteId = id;
+            store.addBooking({ slotId, nota, clienteId });
+            setBookingFor(null);
+            toast(scelta.type === "new" ? "Cliente creato e prenotato" : "Prenotazione aggiunta");
           }
-          store.addBooking(payload);
-          setBookingFor(null);
-          toast(scelta.type === "new" ? "Cliente creato e prenotato" : "Prenotazione aggiunta");
         }} />
 
       {/* ── Modal: modifica/sposta/elimina prenotazione ── */}
@@ -883,17 +968,51 @@ function CalendarPage({ store, toast }) {
 
 /* ── modali del calendario (components/) ── */
 
-function NewSlotModal({ open, day, onClose, onCreate }) {
+function NewSlotModal({ open, day, onClose, onCreate, clienti = [], onRicorrenza }) {
   const [time, setTime] = useState("09:00");
   const [durata, setDurata] = useState(60);
   const [posti, setPosti] = useState(6);
   const [tipo, setTipo] = useState("gruppo");
-  useEffect(() => { if (open) { setTime("09:00"); setDurata(60); setPosti(6); setTipo("gruppo"); } }, [open]);
+  const [ripeti, setRipeti] = useState(false);
+  const [giorni, setGiorni] = useState([]);
+  const [fine, setFine] = useState("");
+  const [clienteFisso, setClienteFisso] = useState("");
+
+  useEffect(() => {
+    if (open) {
+      setTime("09:00"); setDurata(60); setPosti(6); setTipo("gruppo");
+      setRipeti(false); setClienteFisso("");
+      // giorno della settimana del giorno cliccato, preselezionato
+      if (day) setGiorni([new Date(day + "T00:00:00").getDay()]);
+      // default fine: stesso mese
+      if (day) {
+        const d = new Date(day + "T00:00:00");
+        const ultimo = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+        setFine(toStr(ultimo));
+      }
+    }
+  }, [open, day]);
+
+  const GG = [
+    { n: 1, l: "Lun" }, { n: 2, l: "Mar" }, { n: 3, l: "Mer" }, { n: 4, l: "Gio" },
+    { n: 5, l: "Ven" }, { n: 6, l: "Sab" }, { n: 0, l: "Dom" },
+  ];
+  const toggleGiorno = (n) => setGiorni((g) => (g.includes(n) ? g.filter((x) => x !== n) : [...g, n]));
+
+  const conferma = () => {
+    if (ripeti) {
+      if (giorni.length === 0 || !fine) return;
+      onRicorrenza({ dal: day, dataFine: fine, giorni, time, durata, posti, tipo, clienteId: clienteFisso || null });
+    } else {
+      onCreate({ day, time, durata, posti, tipo });
+    }
+  };
+
   return (
-    <Modal open={open} onClose={onClose}>
+    <Modal open={open} onClose={onClose} width={480}>
       <div style={{ fontFamily: FSERIF, fontSize: 20, fontWeight: 800, color: C.ink, marginBottom: 4 }}>Nuova sessione</div>
       <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid, marginBottom: 18, textTransform: "capitalize" }}>{day && fmtLong(day)}</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
         <label style={{ display: "block" }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: C.inkMid, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Orario</div>
           <input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ width: "100%", background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", fontSize: 15, fontWeight: 700, fontFamily: FSANS, outline: "none", boxSizing: "border-box" }} />
@@ -909,8 +1028,53 @@ function NewSlotModal({ open, day, onClose, onCreate }) {
           {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n}</option>)}
         </Select>
       </div>
-      <div style={{ display: "flex", gap: 10 }}>
-        <Btn onClick={() => onCreate({ day, time, durata, posti, tipo })} style={{ flex: 1 }}>Crea sessione</Btn>
+
+      {/* RIPETI */}
+      <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 14, marginBottom: 4 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+          <input type="checkbox" checked={ripeti} onChange={(e) => setRipeti(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.yellow, cursor: "pointer" }} />
+          <span style={{ fontFamily: FSANS, fontWeight: 700, fontSize: 14, color: C.ink }}>🔁 Ripeti ogni settimana</span>
+        </label>
+      </div>
+
+      {ripeti && (
+        <div style={{ background: C.yellowSoft, border: `1.5px solid ${C.yellow}`, borderRadius: 12, padding: 14, marginTop: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.yellowText, marginBottom: 8, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Nei giorni</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+            {GG.map((g) => {
+              const on = giorni.includes(g.n);
+              return (
+                <button key={g.n} onClick={() => toggleGiorno(g.n)}
+                  style={{ background: on ? C.ink : C.white, color: on ? C.yellow : C.inkMid, border: `1.5px solid ${on ? C.ink : C.border}`, borderRadius: 9, padding: "7px 11px", cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: FSANS }}>
+                  {g.l}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <label style={{ display: "block" }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.yellowText, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Fino al</div>
+              <input type="date" value={fine} min={day} onChange={(e) => setFine(e.target.value)} style={{ width: "100%", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", fontSize: 14, fontFamily: FSANS, outline: "none", boxSizing: "border-box" }} />
+            </label>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.yellowText, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Cliente fisso</div>
+              <select value={clienteFisso} onChange={(e) => setClienteFisso(e.target.value)} style={{ width: "100%", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", fontSize: 14, fontFamily: FSANS, outline: "none", cursor: "pointer", boxSizing: "border-box" }}>
+                <option value="">— Nessuno —</option>
+                {clienti.map((c) => <option key={c.id} value={c.id}>{c.nome} {c.cognome}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{ fontFamily: FSANS, fontSize: 11.5, color: C.yellowText, marginTop: 10, lineHeight: 1.5 }}>
+            Se una sessione esiste già a quell'ora viene riusata (nessun doppione). Se è piena, il cliente salta quel giorno e te lo segnalo.
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+        <Btn onClick={conferma} style={{ flex: 1, opacity: (!ripeti || (giorni.length && fine)) ? 1 : .4 }}>
+          {ripeti ? "Crea ricorrenza" : "Crea sessione"}
+        </Btn>
         <Btn variant="secondary" onClick={onClose}>Annulla</Btn>
       </div>
     </Modal>
@@ -920,12 +1084,21 @@ function NewSlotModal({ open, day, onClose, onCreate }) {
 function BookingModal({ open, slot, clienti, onClose, onConfirm }) {
   const [sel, setSel] = useState(null);
   const [nota, setNota] = useState("");
-  useEffect(() => { if (open) { setSel(null); setNota(""); } }, [open]);
+  const [fisso, setFisso] = useState(false);
+  const [fine, setFine] = useState("");
+  useEffect(() => {
+    if (open) {
+      setSel(null); setNota(""); setFisso(false);
+      if (slot) {
+        const d = new Date(slot.day + "T00:00:00");
+        setFine(toStr(new Date(d.getFullYear(), d.getMonth() + 1, 0)));
+      }
+    }
+  }, [open, slot]);
   if (!slot) return null;
   const build = () => {
     if (!sel) return;
-    // il genitore riceve la scelta: cliente esistente o nuovo da creare
-    onConfirm({ slotId: slot.id, nota, scelta: sel });
+    onConfirm({ slotId: slot.id, nota, scelta: sel, fisso, fine });
   };
   return (
     <Modal open={open} onClose={onClose}>
@@ -935,8 +1108,27 @@ function BookingModal({ open, slot, clienti, onClose, onConfirm }) {
       <div style={{ marginTop: 12 }}>
         <Input label="Nota (opzionale)" placeholder="Es. riscaldamento extra" value={nota} onChange={(e) => setNota(e.target.value)} />
       </div>
+
+      <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 14, paddingTop: 14 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+          <input type="checkbox" checked={fisso} onChange={(e) => setFisso(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.yellow, cursor: "pointer" }} />
+          <span style={{ fontFamily: FSANS, fontWeight: 700, fontSize: 14, color: C.ink }}>🔁 Cliente fisso ogni settimana</span>
+        </label>
+        {fisso && (
+          <div style={{ background: C.yellowSoft, border: `1.5px solid ${C.yellow}`, borderRadius: 10, padding: 12, marginTop: 10 }}>
+            <label style={{ display: "block" }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.yellowText, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Fino al</div>
+              <input type="date" value={fine} min={slot.day} onChange={(e) => setFine(e.target.value)} style={{ width: "100%", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", fontSize: 14, fontFamily: FSANS, outline: "none", boxSizing: "border-box" }} />
+            </label>
+            <div style={{ fontFamily: FSANS, fontSize: 11.5, color: C.yellowText, marginTop: 8, lineHeight: 1.5 }}>
+              Ogni {fmtWeekdayShort(slot.day)} alle {slot.time}. Le sessioni mancanti vengono create, quelle piene saltate.
+            </div>
+          </div>
+        )}
+      </div>
+
       <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-        <Btn onClick={build} style={{ flex: 1, opacity: sel ? 1 : .4 }}>Conferma</Btn>
+        <Btn onClick={build} style={{ flex: 1, opacity: sel ? 1 : .4 }}>{fisso ? "Iscrivi ogni settimana" : "Conferma"}</Btn>
         <Btn variant="secondary" onClick={onClose}>Annulla</Btn>
       </div>
     </Modal>
