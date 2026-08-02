@@ -312,8 +312,8 @@ function useStore() {
       const c = makeCliente({ nome, cognome });
       markWrite();
       setState((s) => ({ ...s, clienti: [...s.clienti, c] }));
-      db.insertCliente(c);
-      return c.id;
+      // ritorna id + promessa: chi prenota deve attendere che il cliente esista
+      return { id: c.id, pronto: db.insertCliente(c) };
     },
     updateCliente: (id, patch) => {
       markWrite();
@@ -349,7 +349,7 @@ function useStore() {
     // Regola d'oro: un giorno + un orario = UN SOLO slot (mai duplicati).
     // Se clienteId è passato, iscrive anche il cliente a ogni sessione.
     // Ritorna un riepilogo: create, riusate, saltate (slot pieni).
-    creaRicorrenza: ({ dal, dataFine, giorni, time, durata, posti, tipo, clienteId }) => {
+    creaRicorrenza: ({ dal, dataFine, giorni, time, durata, posti, tipo, clienteId, attendiCliente }) => {
       const esito = { create: 0, riusate: 0, pieneSaltate: [], giaIscritto: 0, iscritti: 0 };
       const nuoviSlot = [];
       const nuoveBooking = [];
@@ -400,8 +400,11 @@ function useStore() {
           slots: [...s.slots, ...nuoviSlot],
           bookings: [...s.bookings, ...nuoveBooking],
         }));
-        nuoviSlot.forEach((sl) => db.insertSlot(sl));
-        nuoveBooking.forEach((bk) => db.insertBooking(bk));
+        (async () => {
+          for (const sl of nuoviSlot) await db.insertSlot(sl);
+          if (attendiCliente) await attendiCliente; // il cliente deve esistere prima
+          for (const bk of nuoveBooking) await db.insertBooking(bk);
+        })();
       }
       return esito;
     },
@@ -417,10 +420,11 @@ function useStore() {
     },
 
     // ── bookings ──
-    addBooking: (data) => {
+    addBooking: async (data, attendi) => {
       const b = makeBooking(data);
       markWrite();
       setState((s) => ({ ...s, bookings: [...s.bookings, b] }));
+      if (attendi) await attendi; // aspetta che il cliente esista nel DB
       db.insertBooking(b);
       return b.id;
     },
@@ -684,7 +688,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v4-ricorrenze</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v5-fix</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -934,13 +938,20 @@ function CalendarPage({ store, toast }) {
       <BookingModal open={!!bookingFor} slot={bookingFor} clienti={state.clienti}
         onClose={() => setBookingFor(null)}
         onConfirm={({ slotId, nota, scelta, fisso, fine }) => {
-          const clienteId = scelta.type === "cliente" ? scelta.id : store.createClienteQuick(scelta.name);
+          let clienteId, attendi = null;
+          if (scelta.type === "cliente") {
+            clienteId = scelta.id;
+          } else {
+            const nuovo = store.createClienteQuick(scelta.name);
+            clienteId = nuovo.id;
+            attendi = nuovo.pronto; // la prenotazione aspetterà che il cliente esista
+          }
           if (fisso && fine) {
             const dow = new Date(bookingFor.day + "T00:00:00").getDay();
             const r = store.creaRicorrenza({
               dal: bookingFor.day, dataFine: fine, giorni: [dow],
               time: bookingFor.time, durata: bookingFor.durata, posti: bookingFor.posti, tipo: bookingFor.tipo,
-              clienteId,
+              clienteId, attendiCliente: attendi,
             });
             setBookingFor(null);
             toast(`✓ Iscritto a ${r.iscritti} sessioni${r.create ? ` (${r.create} create)` : ""}`);
@@ -948,7 +959,7 @@ function CalendarPage({ store, toast }) {
               setTimeout(() => toast(`⚠️ Piene, saltate: ${r.pieneSaltate.map(fmtShort).join(", ")}`, "err"), 400);
             }
           } else {
-            store.addBooking({ slotId, nota, clienteId });
+            store.addBooking({ slotId, nota, clienteId }, attendi);
             setBookingFor(null);
             toast(scelta.type === "new" ? "Cliente creato e prenotato" : "Prenotazione aggiunta");
           }
