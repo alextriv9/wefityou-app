@@ -688,7 +688,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v5-fix</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v6-orario</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1024,10 +1024,20 @@ function NewSlotModal({ open, day, onClose, onCreate, clienti = [], onRicorrenza
       <div style={{ fontFamily: FSERIF, fontSize: 20, fontWeight: 800, color: C.ink, marginBottom: 4 }}>Nuova sessione</div>
       <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid, marginBottom: 18, textTransform: "capitalize" }}>{day && fmtLong(day)}</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-        <label style={{ display: "block" }}>
+        <div>
           <div style={{ fontSize: 11, fontWeight: 600, color: C.inkMid, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Orario</div>
-          <input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ width: "100%", background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", fontSize: 15, fontWeight: 700, fontFamily: FSANS, outline: "none", boxSizing: "border-box" }} />
-        </label>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <select value={time.split(":")[0]} onChange={(e) => setTime(e.target.value + ":" + time.split(":")[1])}
+              style={{ flex: 1, background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 8px", fontSize: 16, fontWeight: 700, fontFamily: FSANS, outline: "none", cursor: "pointer", textAlign: "center" }}>
+              {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")).map((h) => <option key={h} value={h}>{h}</option>)}
+            </select>
+            <span style={{ fontFamily: FSERIF, fontWeight: 800, fontSize: 18, color: C.inkMid }}>:</span>
+            <select value={time.split(":")[1]} onChange={(e) => setTime(time.split(":")[0] + ":" + e.target.value)}
+              style={{ flex: 1, background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 8px", fontSize: 16, fontWeight: 700, fontFamily: FSANS, outline: "none", cursor: "pointer", textAlign: "center" }}>
+              {["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"].map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+        </div>
         <Select label="Tipo" value={tipo} onChange={(e) => { setTipo(e.target.value); if (e.target.value === "pt") setPosti(1); }}>
           <option value="gruppo">Gruppo</option>
           <option value="pt">PT (1-a-1)</option>
@@ -1067,6 +1077,14 @@ function NewSlotModal({ open, day, onClose, onCreate, clienti = [], onRicorrenza
             <label style={{ display: "block" }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: C.yellowText, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Fino al</div>
               <input type="date" value={fine} min={day} onChange={(e) => setFine(e.target.value)} style={{ width: "100%", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", fontSize: 14, fontFamily: FSANS, outline: "none", boxSizing: "border-box" }} />
+              <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap" }}>
+                {[{ l: "1 mese", m: 1 }, { l: "3 mesi", m: 3 }, { l: "6 mesi", m: 6 }].map((o) => (
+                  <button key={o.l} onClick={() => { const d = new Date(day + "T00:00:00"); d.setMonth(d.getMonth() + o.m); setFine(toStr(d)); }}
+                    style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 7, padding: "5px 9px", fontSize: 11, fontWeight: 600, fontFamily: FSANS, color: C.inkMid, cursor: "pointer" }}>
+                    +{o.l}
+                  </button>
+                ))}
+              </div>
             </label>
             <div>
               <div style={{ fontSize: 11, fontWeight: 600, color: C.yellowText, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Cliente fisso</div>
@@ -1130,6 +1148,14 @@ function BookingModal({ open, slot, clienti, onClose, onConfirm }) {
             <label style={{ display: "block" }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: C.yellowText, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Fino al</div>
               <input type="date" value={fine} min={slot.day} onChange={(e) => setFine(e.target.value)} style={{ width: "100%", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", fontSize: 14, fontFamily: FSANS, outline: "none", boxSizing: "border-box" }} />
+              <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap" }}>
+                {[{ l: "1 mese", m: 1 }, { l: "3 mesi", m: 3 }, { l: "6 mesi", m: 6 }].map((o) => (
+                  <button key={o.l} onClick={() => { const d = new Date(slot.day + "T00:00:00"); d.setMonth(d.getMonth() + o.m); setFine(toStr(d)); }}
+                    style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 7, padding: "5px 9px", fontSize: 11, fontWeight: 600, fontFamily: FSANS, color: C.inkMid, cursor: "pointer" }}>
+                    +{o.l}
+                  </button>
+                ))}
+              </div>
             </label>
             <div style={{ fontFamily: FSANS, fontSize: 11.5, color: C.yellowText, marginTop: 8, lineHeight: 1.5 }}>
               Ogni {fmtWeekdayShort(slot.day)} alle {slot.time}. Le sessioni mancanti vengono create, quelle piene saltate.
