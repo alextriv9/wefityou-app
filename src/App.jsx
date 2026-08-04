@@ -76,7 +76,7 @@ const monthLabel = (offset = 0) => {
 /* ═══════════════════════════ data/ ════════════════════════════════════════ */
 
 const ADMIN_PIN = "807002";
-const STAFF = ["Alessandro", "Luca", "Nicolò", "Mattia", "Sara"];
+const STAFF = ["Alessandro", "Luca", "Niccolò", "Mattia", "Sara"];
 const MAX_POSTI = 8;
 
 // Tipi di sessione → guida i colori (punto 7). PT = verde, gruppo = giallo.
@@ -688,7 +688,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v6-orario</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v8-stats</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1546,6 +1546,123 @@ function ModelliPage({ store, toast }) {
 }
 
 
+/* ═══════════════════════════ pages/ · Statistiche ═════════════════════════
+   Conteggi lezioni per periodo. Conta solo le sessioni già svolte
+   (fino a oggi), non le prenotazioni future. */
+function StatistichePage({ store }) {
+  const { state } = store;
+  const [periodo, setPeriodo] = useState("mese");
+  const [dal, setDal] = useState(monthBounds(0).start);
+  const [al, setAl] = useState(todayStr());
+
+  // preset rapidi
+  const applica = (p) => {
+    setPeriodo(p);
+    const oggi = todayStr();
+    if (p === "mese") { setDal(monthBounds(0).start); setAl(oggi); }
+    else if (p === "scorso") { const b = monthBounds(-1); setDal(b.start); setAl(addDays(b.end, -1)); }
+    else if (p === "anno") { setDal(`${new Date().getFullYear()}-01-01`); setAl(oggi); }
+  };
+
+  const dati = useMemo(() => {
+    const t = todayStr();
+    const limite = al > t ? t : al; // non conta il futuro
+    const perCliente = new Map();
+    let totale = 0, gruppo = 0, pt = 0;
+
+    for (const b of state.bookings) {
+      const s = state.slots.find((x) => x.id === b.slotId);
+      if (!s) continue;
+      if (s.day < dal || s.day > limite) continue;
+      totale++;
+      if (s.tipo === "pt") pt++; else gruppo++;
+      const key = b.clienteId || "guest";
+      perCliente.set(key, (perCliente.get(key) || 0) + 1);
+    }
+
+    const righe = [...perCliente.entries()].map(([id, n]) => {
+      const c = state.clienti.find((x) => x.id === id);
+      return { id, nome: c ? `${c.nome} ${c.cognome}`.trim() : "Ospite", n };
+    }).sort((a, b) => b.n - a.n);
+
+    return { righe, totale, gruppo, pt, attivi: righe.length };
+  }, [state, dal, al]);
+
+  const max = dati.righe[0]?.n || 1;
+
+  const stat = (label, valore, colore) => (
+    <Card style={{ padding: 16 }}>
+      <div style={{ fontFamily: FSANS, fontSize: 10.5, fontWeight: 600, color: C.inkMid, textTransform: "uppercase", letterSpacing: .4 }}>{label}</div>
+      <div style={{ fontFamily: FSERIF, fontSize: 32, fontWeight: 800, color: colore || C.ink, lineHeight: 1.1, marginTop: 2 }}>{valore}</div>
+    </Card>
+  );
+
+  return (
+    <div>
+      <SectionTitle>Statistiche</SectionTitle>
+
+      {/* periodo */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+        <Pill active={periodo === "mese"} onClick={() => applica("mese")}>Questo mese</Pill>
+        <Pill active={periodo === "scorso"} onClick={() => applica("scorso")}>Mese scorso</Pill>
+        <Pill active={periodo === "anno"} onClick={() => applica("anno")}>Quest'anno</Pill>
+        <Pill active={periodo === "custom"} onClick={() => setPeriodo("custom")}>Personalizzato</Pill>
+      </div>
+
+      {periodo === "custom" && (
+        <Card style={{ marginBottom: 14, padding: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <label>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.inkMid, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Dal</div>
+              <input type="date" value={dal} onChange={(e) => setDal(e.target.value)} style={{ width: "100%", background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", fontSize: 14, fontFamily: FSANS, outline: "none", boxSizing: "border-box" }} />
+            </label>
+            <label>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.inkMid, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Al</div>
+              <input type="date" value={al} onChange={(e) => setAl(e.target.value)} style={{ width: "100%", background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", fontSize: 14, fontFamily: FSANS, outline: "none", boxSizing: "border-box" }} />
+            </label>
+          </div>
+        </Card>
+      )}
+
+      <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 14 }}>
+        Dal {fmtShort(dal)} al {fmtShort(al > todayStr() ? todayStr() : al)} · solo sessioni già svolte
+      </div>
+
+      {/* totali */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
+        {stat("Lezioni totali", dati.totale, C.green)}
+        {stat("Clienti attivi", dati.attivi)}
+        {stat("Di gruppo", dati.gruppo)}
+        {stat("PT individuali", dati.pt, "#2E9E55")}
+      </div>
+
+      {/* classifica */}
+      <SectionTitle>Per cliente</SectionTitle>
+      {dati.righe.length === 0 ? (
+        <Card><Empty icon="📊" text="Nessuna lezione in questo periodo." /></Card>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {dati.righe.map((r, i) => (
+            <Card key={r.id} style={{ padding: "12px 16px", animation: "wfy-in .16s ease" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontFamily: FSERIF, fontWeight: 800, fontSize: 14, color: C.inkFaint, minWidth: 22 }}>{i + 1}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: FSANS, fontWeight: 700, fontSize: 14, color: C.ink, marginBottom: 5 }}>{r.nome}</div>
+                  <div style={{ background: C.bg, borderRadius: 6, height: 7, overflow: "hidden" }}>
+                    <div style={{ width: `${(r.n / max) * 100}%`, height: "100%", background: C.yellow, borderRadius: 6 }} />
+                  </div>
+                </div>
+                <span style={{ fontFamily: FSERIF, fontWeight: 800, fontSize: 20, color: C.ink, minWidth: 32, textAlign: "right" }}>{r.n}</span>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 /* ═══════════════════════════ app root ═════════════════════════════════════ */
 
 const NAV = [
@@ -1553,6 +1670,7 @@ const NAV = [
   { id: "calendario", icon: "📅", label: "Calendario" },
   { id: "clienti", icon: "👥", label: "Clienti" },
   { id: "modelli", icon: "📋", label: "Modelli" },
+  { id: "statistiche", icon: "📊", label: "Statistiche" },
 ];
 
 export default function App() {
@@ -1611,6 +1729,7 @@ export default function App() {
             {tab === "calendario" && <CalendarPage store={store} toast={push} />}
             {tab === "clienti" && <ClientiPage store={store} toast={push} />}
             {tab === "modelli" && <ModelliPage store={store} toast={push} />}
+            {tab === "statistiche" && <StatistichePage store={store} />}
           </>
         )}
       </main>
@@ -1619,9 +1738,9 @@ export default function App() {
       {mobile && (
         <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.dark, display: "flex", zIndex: 100, borderTop: "1px solid #2a2a2a", padding: "8px 0 calc(8px + env(safe-area-inset-bottom))" }}>
           {NAV.map((n) => (
-            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, background: "transparent", border: "none", cursor: "pointer", color: tab === n.id ? C.yellow : "#888", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "4px 0", fontFamily: FSANS }}>
-              <span style={{ fontSize: 18 }}>{n.icon}</span>
-              <span style={{ fontSize: 10, fontWeight: 600 }}>{n.label}</span>
+            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", cursor: "pointer", color: tab === n.id ? C.yellow : "#888", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "4px 0", fontFamily: FSANS }}>
+              <span style={{ fontSize: 16 }}>{n.icon}</span>
+              <span style={{ fontSize: 9, fontWeight: 600 }}>{n.label}</span>
             </button>
           ))}
         </nav>
