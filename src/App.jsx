@@ -688,7 +688,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v8-stats</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v9-stats</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1570,9 +1570,14 @@ function StatistichePage({ store }) {
     const perCliente = new Map();
     let totale = 0, gruppo = 0, pt = 0;
 
-    for (const b of state.bookings) {
-      const s = state.slots.find((x) => x.id === b.slotId);
-      if (!s) continue;
+    const bookings = Array.isArray(state?.bookings) ? state.bookings : [];
+    const slots = Array.isArray(state?.slots) ? state.slots : [];
+    const clienti = Array.isArray(state?.clienti) ? state.clienti : [];
+
+    for (const b of bookings) {
+      if (!b) continue;
+      const s = slots.find((x) => x && x.id === b.slotId);
+      if (!s || !s.day) continue;
       if (s.day < dal || s.day > limite) continue;
       totale++;
       if (s.tipo === "pt") pt++; else gruppo++;
@@ -1581,8 +1586,8 @@ function StatistichePage({ store }) {
     }
 
     const righe = [...perCliente.entries()].map(([id, n]) => {
-      const c = state.clienti.find((x) => x.id === id);
-      return { id, nome: c ? `${c.nome} ${c.cognome}`.trim() : "Ospite", n };
+      const c = clienti.find((x) => x && x.id === id);
+      return { id, nome: c ? `${c.nome || ""} ${c.cognome || ""}`.trim() : "Ospite", n };
     }).sort((a, b) => b.n - a.n);
 
     return { righe, totale, gruppo, pt, attivi: righe.length };
