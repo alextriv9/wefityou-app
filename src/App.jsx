@@ -27,6 +27,8 @@ const pad = (n) => String(n).padStart(2, "0");
 const toStr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
 const todayStr = () => toStr(new Date());
+// mese corrente in formato "2026-08" — usato per la spunta pagamento
+const meseCorrente = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
 
 const addDays = (dateStr, n) => {
   const d = new Date(dateStr + "T00:00:00");
@@ -91,6 +93,7 @@ const SESSION_TYPES = {
 const makeCliente = (o = {}) => ({
   id: uid(),
   nome: "", cognome: "", telefono: "", email: "", note: "",
+  mesePagato: null, // es. "2026-08": mese in cui ha pagato (si azzera da solo)
   // stand-by pacchetti — pronti per il futuro, non usati nell'UI ora:
   pacchetto: null, seduteTotali: 0, seduteUsate: 0,
   createdAt: new Date().toISOString(),
@@ -168,7 +171,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 // ── mapping DB → app ──
 const rowToBooking = (r) => ({ id: r.id, slotId: r.slot_id, clienteId: r.cliente_id, clienteName: r.cliente_name || undefined, nota: r.nota || "", stato: r.stato || "prenotato", createdAt: r.created_at });
 const rowToScheda  = (r) => ({ id: r.id, clienteId: r.cliente_id, nome: r.nome, note: r.note || "", esercizi: r.esercizi || [], createdAt: r.created_at, updatedAt: r.updated_at });
-const rowToCliente = (r) => ({ id: r.id, nome: r.nome, cognome: r.cognome || "", telefono: r.telefono || "", email: r.email || "", note: r.note || "", createdAt: r.created_at });
+const rowToCliente = (r) => ({ id: r.id, nome: r.nome, cognome: r.cognome || "", telefono: r.telefono || "", email: r.email || "", note: r.note || "", mesePagato: r.mese_pagato || null, createdAt: r.created_at });
 const rowToSlot    = (r) => ({ id: r.id, day: r.day, time: r.time, durata: r.durata, posti: r.posti, tipo: r.tipo || "gruppo", createdAt: r.created_at });
 
 // Segnalatore di errori: se una scrittura fallisce, lo mostra a schermo
@@ -210,8 +213,12 @@ const db = {
   },
 
   // clienti
-  insertCliente: (c) => run("salva cliente", supabase.from("clienti").insert({ id: c.id, nome: c.nome, cognome: c.cognome, telefono: c.telefono, email: c.email, note: c.note })),
-  updateCliente: (id, p) => run("aggiorna cliente", supabase.from("clienti").update(p).eq("id", id)),
+  insertCliente: (c) => run("salva cliente", supabase.from("clienti").insert({ id: c.id, nome: c.nome, cognome: c.cognome, telefono: c.telefono, email: c.email, note: c.note, mese_pagato: c.mesePagato })),
+  updateCliente: (id, p) => {
+    const patch = { ...p };
+    if ("mesePagato" in patch) { patch.mese_pagato = patch.mesePagato; delete patch.mesePagato; }
+    return run("aggiorna cliente", supabase.from("clienti").update(patch).eq("id", id));
+  },
   deleteCliente: (id) => run("elimina cliente", supabase.from("clienti").delete().eq("id", id)),
 
   // slots
@@ -324,6 +331,18 @@ function useStore() {
       markWrite();
       setState((s) => ({ ...s, clienti: s.clienti.filter((c) => c.id !== id) }));
       db.deleteCliente(id);
+    },
+    // segna/desegna il pagamento del mese corrente
+    togglePagato: (id) => {
+      const mese = meseCorrente();
+      let nuovo = null;
+      setState((s) => ({ ...s, clienti: s.clienti.map((c) => {
+        if (c.id !== id) return c;
+        nuovo = c.mesePagato === mese ? null : mese; // se già pagato questo mese → togli
+        return { ...c, mesePagato: nuovo };
+      }) }));
+      markWrite();
+      db.updateCliente(id, { mesePagato: nuovo });
     },
 
     // ── slots ──
@@ -531,6 +550,14 @@ function useFonts() {
   }, []);
 }
 
+const Pill = ({ active, children, ...p }) => (
+  <button {...p} style={{
+    background: active ? C.ink : C.white, color: active ? C.yellow : C.inkMid,
+    border: `1.5px solid ${active ? C.ink : C.border}`, borderRadius: 999,
+    padding: "8px 16px", cursor: "pointer", fontFamily: FSANS, fontWeight: 700, fontSize: 13,
+  }}>{children}</button>
+);
+
 const Badge = ({ children, color = C.yellow, bg = C.yellowSoft }) => (
   <span style={{ background: bg, color, fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 20, fontFamily: FSANS }}>{children}</span>
 );
@@ -688,7 +715,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v9-stats</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v10-pagamenti</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1216,17 +1243,20 @@ function EditBookingModal({ open, data, slots, onClose, onSave, onMove, onDelete
 function ClientiPage({ store, toast }) {
   const { state } = store;
   const [q, setQ] = useState("");
+  const [soloNonPagati, setSoloNonPagati] = useState(false);
   const [edit, setEdit] = useState(null);  // cliente in modifica
   const [creating, setCreating] = useState(false);
 
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
-    const base = [...state.clienti].sort((a, b) =>
+    const mese = meseCorrente();
+    let base = [...state.clienti].sort((a, b) =>
       `${a.cognome} ${a.nome}`.localeCompare(`${b.cognome} ${b.nome}`, "it"));
-    if (!s) return base;
-    return base.filter((c) =>
+    if (s) base = base.filter((c) =>
       `${c.nome} ${c.cognome} ${c.telefono} ${c.email}`.toLowerCase().includes(s));
-  }, [q, state.clienti]);
+    if (soloNonPagati) base = base.filter((c) => c.mesePagato !== mese);
+    return base;
+  }, [q, soloNonPagati, state.clienti]);
 
   const bookingsCount = (id) => state.bookings.filter((b) => b.clienteId === id).length;
 
@@ -1235,11 +1265,18 @@ function ClientiPage({ store, toast }) {
       <SectionTitle right={<Badge color={C.inkMid} bg={C.bg}>{state.clienti.length} in archivio</Badge>}>Clienti</SectionTitle>
 
       {/* barra ricerca + nuovo */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 180 }}>
           <Input placeholder="Cerca per nome, telefono, email…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <Btn onClick={() => setCreating(true)}>+ Nuovo</Btn>
+      </div>
+
+      {/* filtro pagamento */}
+      <div style={{ marginBottom: 20 }}>
+        <Pill active={soloNonPagati} onClick={() => setSoloNonPagati((v) => !v)}>
+          {soloNonPagati ? "✓ Solo da pagare" : "Mostra solo da pagare"}
+        </Pill>
       </div>
 
       {list.length === 0 ? (
@@ -1248,19 +1285,30 @@ function ClientiPage({ store, toast }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12 }}>
           {list.map((c) => {
             const n = bookingsCount(c.id);
+            const pagato = c.mesePagato === meseCorrente();
             return (
-              <Card key={c.id} onClick={() => setEdit(c)} style={{ cursor: "pointer", animation: "wfy-in .18s ease" }}>
-                <div style={{ fontFamily: FSERIF, fontSize: 18, fontWeight: 800, color: C.ink, marginBottom: 6 }}>
-                  {c.nome} {c.cognome}
+              <Card key={c.id} style={{ animation: "wfy-in .18s ease" }}>
+                <div onClick={() => setEdit(c)} style={{ cursor: "pointer" }}>
+                  <div style={{ fontFamily: FSERIF, fontSize: 18, fontWeight: 800, color: C.ink, marginBottom: 6 }}>
+                    {c.nome} {c.cognome}
+                  </div>
+                  {c.telefono && <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid, marginBottom: 3 }}>📞 {c.telefono}</div>}
+                  {c.email && <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid, marginBottom: 3 }}>✉️ {c.email}</div>}
+                  {c.note && <div style={{ fontFamily: FSANS, fontSize: 12, color: C.amber, marginTop: 6, lineHeight: 1.4 }}>⚕️ {c.note}</div>}
+                  <div style={{ marginTop: 10 }}>
+                    <Badge color={n > 0 ? C.green : C.inkFaint} bg={n > 0 ? C.greenSoft : C.bg}>
+                      {n} {n === 1 ? "prenotazione" : "prenotazioni"}
+                    </Badge>
+                  </div>
                 </div>
-                {c.telefono && <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid, marginBottom: 3 }}>📞 {c.telefono}</div>}
-                {c.email && <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid, marginBottom: 3 }}>✉️ {c.email}</div>}
-                {c.note && <div style={{ fontFamily: FSANS, fontSize: 12, color: C.amber, marginTop: 6, lineHeight: 1.4 }}>⚕️ {c.note}</div>}
-                <div style={{ marginTop: 10 }}>
-                  <Badge color={n > 0 ? C.green : C.inkFaint} bg={n > 0 ? C.greenSoft : C.bg}>
-                    {n} {n === 1 ? "prenotazione" : "prenotazioni"}
-                  </Badge>
-                </div>
+                {/* spunta pagamento mese corrente */}
+                <button onClick={(e) => { e.stopPropagation(); store.togglePagato(c.id); }}
+                  style={{ marginTop: 12, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    background: pagato ? C.greenSoft : C.bg, border: `1.5px solid ${pagato ? C.green : C.border}`,
+                    color: pagato ? C.green : C.inkMid, borderRadius: 10, padding: "9px 12px", cursor: "pointer",
+                    fontFamily: FSANS, fontWeight: 700, fontSize: 13 }}>
+                  {pagato ? "✓ Pagato questo mese" : "○ Segna come pagato"}
+                </button>
               </Card>
             );
           })}
@@ -1337,6 +1385,18 @@ function ClienteModal({ open, cliente, store, slots = [], bookings = [], toast, 
             <div style={{ fontFamily: FSERIF, fontSize: 28, fontWeight: 800, color: C.inkMid, lineHeight: 1.1 }}>{stats.prevN}<span style={{ fontSize: 13, fontWeight: 400, color: C.inkFaint }}> sedute</span></div>
           </div>
         </div>
+      )}
+
+      {/* spunta pagamento mese corrente (solo in modifica) */}
+      {cliente && store && (
+        <button onClick={() => store.togglePagato(cliente.id)}
+          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 18,
+            background: cliente.mesePagato === meseCorrente() ? C.greenSoft : C.bg,
+            border: `1.5px solid ${cliente.mesePagato === meseCorrente() ? C.green : C.border}`,
+            color: cliente.mesePagato === meseCorrente() ? C.green : C.inkMid,
+            borderRadius: 10, padding: "11px 14px", cursor: "pointer", fontFamily: FSANS, fontWeight: 700, fontSize: 14 }}>
+          {cliente.mesePagato === meseCorrente() ? "✓ Ha pagato questo mese" : "○ Segna come pagato questo mese"}
+        </button>
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -1546,127 +1606,6 @@ function ModelliPage({ store, toast }) {
 }
 
 
-/* ═══════════════════════════ pages/ · Statistiche ═════════════════════════
-   Conteggi lezioni per periodo. Conta solo le sessioni già svolte
-   (fino a oggi), non le prenotazioni future. */
-function StatistichePage({ store }) {
-  const { state } = store;
-  const [periodo, setPeriodo] = useState("mese");
-  const [dal, setDal] = useState(monthBounds(0).start);
-  const [al, setAl] = useState(todayStr());
-
-  // preset rapidi
-  const applica = (p) => {
-    setPeriodo(p);
-    const oggi = todayStr();
-    if (p === "mese") { setDal(monthBounds(0).start); setAl(oggi); }
-    else if (p === "scorso") { const b = monthBounds(-1); setDal(b.start); setAl(addDays(b.end, -1)); }
-    else if (p === "anno") { setDal(`${new Date().getFullYear()}-01-01`); setAl(oggi); }
-  };
-
-  const dati = useMemo(() => {
-    const t = todayStr();
-    const limite = al > t ? t : al; // non conta il futuro
-    const perCliente = new Map();
-    let totale = 0, gruppo = 0, pt = 0;
-
-    const bookings = Array.isArray(state?.bookings) ? state.bookings : [];
-    const slots = Array.isArray(state?.slots) ? state.slots : [];
-    const clienti = Array.isArray(state?.clienti) ? state.clienti : [];
-
-    for (const b of bookings) {
-      if (!b) continue;
-      const s = slots.find((x) => x && x.id === b.slotId);
-      if (!s || !s.day) continue;
-      if (s.day < dal || s.day > limite) continue;
-      totale++;
-      if (s.tipo === "pt") pt++; else gruppo++;
-      const key = b.clienteId || "guest";
-      perCliente.set(key, (perCliente.get(key) || 0) + 1);
-    }
-
-    const righe = [...perCliente.entries()].map(([id, n]) => {
-      const c = clienti.find((x) => x && x.id === id);
-      return { id, nome: c ? `${c.nome || ""} ${c.cognome || ""}`.trim() : "Ospite", n };
-    }).sort((a, b) => b.n - a.n);
-
-    return { righe, totale, gruppo, pt, attivi: righe.length };
-  }, [state, dal, al]);
-
-  const max = dati.righe[0]?.n || 1;
-
-  const stat = (label, valore, colore) => (
-    <Card style={{ padding: 16 }}>
-      <div style={{ fontFamily: FSANS, fontSize: 10.5, fontWeight: 600, color: C.inkMid, textTransform: "uppercase", letterSpacing: .4 }}>{label}</div>
-      <div style={{ fontFamily: FSERIF, fontSize: 32, fontWeight: 800, color: colore || C.ink, lineHeight: 1.1, marginTop: 2 }}>{valore}</div>
-    </Card>
-  );
-
-  return (
-    <div>
-      <SectionTitle>Statistiche</SectionTitle>
-
-      {/* periodo */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-        <Pill active={periodo === "mese"} onClick={() => applica("mese")}>Questo mese</Pill>
-        <Pill active={periodo === "scorso"} onClick={() => applica("scorso")}>Mese scorso</Pill>
-        <Pill active={periodo === "anno"} onClick={() => applica("anno")}>Quest'anno</Pill>
-        <Pill active={periodo === "custom"} onClick={() => setPeriodo("custom")}>Personalizzato</Pill>
-      </div>
-
-      {periodo === "custom" && (
-        <Card style={{ marginBottom: 14, padding: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <label>
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.inkMid, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Dal</div>
-              <input type="date" value={dal} onChange={(e) => setDal(e.target.value)} style={{ width: "100%", background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", fontSize: 14, fontFamily: FSANS, outline: "none", boxSizing: "border-box" }} />
-            </label>
-            <label>
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.inkMid, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Al</div>
-              <input type="date" value={al} onChange={(e) => setAl(e.target.value)} style={{ width: "100%", background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", fontSize: 14, fontFamily: FSANS, outline: "none", boxSizing: "border-box" }} />
-            </label>
-          </div>
-        </Card>
-      )}
-
-      <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 14 }}>
-        Dal {fmtShort(dal)} al {fmtShort(al > todayStr() ? todayStr() : al)} · solo sessioni già svolte
-      </div>
-
-      {/* totali */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
-        {stat("Lezioni totali", dati.totale, C.green)}
-        {stat("Clienti attivi", dati.attivi)}
-        {stat("Di gruppo", dati.gruppo)}
-        {stat("PT individuali", dati.pt, "#2E9E55")}
-      </div>
-
-      {/* classifica */}
-      <SectionTitle>Per cliente</SectionTitle>
-      {dati.righe.length === 0 ? (
-        <Card><Empty icon="📊" text="Nessuna lezione in questo periodo." /></Card>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {dati.righe.map((r, i) => (
-            <Card key={r.id} style={{ padding: "12px 16px", animation: "wfy-in .16s ease" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <span style={{ fontFamily: FSERIF, fontWeight: 800, fontSize: 14, color: C.inkFaint, minWidth: 22 }}>{i + 1}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: FSANS, fontWeight: 700, fontSize: 14, color: C.ink, marginBottom: 5 }}>{r.nome}</div>
-                  <div style={{ background: C.bg, borderRadius: 6, height: 7, overflow: "hidden" }}>
-                    <div style={{ width: `${(r.n / max) * 100}%`, height: "100%", background: C.yellow, borderRadius: 6 }} />
-                  </div>
-                </div>
-                <span style={{ fontFamily: FSERIF, fontWeight: 800, fontSize: 20, color: C.ink, minWidth: 32, textAlign: "right" }}>{r.n}</span>
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 
 /* ═══════════════════════════ app root ═════════════════════════════════════ */
 
@@ -1675,7 +1614,6 @@ const NAV = [
   { id: "calendario", icon: "📅", label: "Calendario" },
   { id: "clienti", icon: "👥", label: "Clienti" },
   { id: "modelli", icon: "📋", label: "Modelli" },
-  { id: "statistiche", icon: "📊", label: "Statistiche" },
 ];
 
 export default function App() {
@@ -1734,7 +1672,6 @@ export default function App() {
             {tab === "calendario" && <CalendarPage store={store} toast={push} />}
             {tab === "clienti" && <ClientiPage store={store} toast={push} />}
             {tab === "modelli" && <ModelliPage store={store} toast={push} />}
-            {tab === "statistiche" && <StatistichePage store={store} />}
           </>
         )}
       </main>
