@@ -287,7 +287,22 @@ function useStore() {
   const reloadSafe = useCallback(async () => {
     if (Date.now() < writingUntil.current) return; // scrittura in corso: non sovrascrivere
     const data = await db.loadAll();
-    setState(data);
+    // salvaguardia: non perdere elementi creati localmente da pochi secondi
+    // che potrebbero non essere ancora stati propagati dal database.
+    setState((prev) => {
+      const recente = (x) => x.createdAt && (Date.now() - new Date(x.createdAt).getTime() < 15000);
+      const fondi = (dbList, localList) => {
+        const ids = new Set(dbList.map((x) => x.id));
+        const mancanti = localList.filter((x) => !ids.has(x.id) && recente(x));
+        return [...dbList, ...mancanti];
+      };
+      return {
+        clienti: fondi(data.clienti, prev.clienti || []),
+        slots: fondi(data.slots, prev.slots || []),
+        bookings: fondi(data.bookings, prev.bookings || []),
+        schede: fondi(data.schede, prev.schede || []),
+      };
+    });
   }, []);
 
   useEffect(() => {
@@ -317,7 +332,7 @@ function useStore() {
       const nome = parts.shift() || fullName.trim();
       const cognome = parts.join(" ");
       const c = makeCliente({ nome, cognome });
-      markWrite();
+      writingUntil.current = Date.now() + 6000; // finestra più ampia: cliente + prenotazione
       setState((s) => ({ ...s, clienti: [...s.clienti, c] }));
       // ritorna id + promessa: chi prenota deve attendere che il cliente esista
       return { id: c.id, pronto: db.insertCliente(c) };
@@ -715,7 +730,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v11</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v12-fix</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -964,7 +979,7 @@ function CalendarPage({ store, toast }) {
       {/* ── Modal: prenota su slot ── */}
       <BookingModal open={!!bookingFor} slot={bookingFor} clienti={state.clienti}
         onClose={() => setBookingFor(null)}
-        onConfirm={({ slotId, nota, scelta, fisso, fine }) => {
+        onConfirm={async ({ slotId, nota, scelta, fisso, fine }) => {
           let clienteId, attendi = null;
           if (scelta.type === "cliente") {
             clienteId = scelta.id;
