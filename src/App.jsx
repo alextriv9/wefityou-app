@@ -471,13 +471,16 @@ function useStore() {
       markWrite();
       setState((s) => ({ ...s, bookings: [...s.bookings, b] }));
       let clienteOk = true;
-      if (attendi) clienteOk = await attendi; // aspetta e verifica che il cliente esista nel DB
-      if (!clienteOk && data.clienteName) {
-        // il cliente non è stato salvato: registro la prenotazione col nome,
-        // così l'appuntamento resta comunque (senza violare la foreign key)
+      if (attendi) {
+        try { clienteOk = await attendi; } // aspetta il cliente, ma non bloccarti se va storto
+        catch (e) { clienteOk = false; console.error("[WFY] attesa cliente fallita:", e); }
+      }
+      if (!clienteOk) {
+        // il cliente non è nel DB: registro la prenotazione col solo nome
         b.clienteId = null;
       }
-      db.insertBooking(b);
+      const esito = await db.insertBooking(b);
+      if (!esito) console.error("[WFY] prenotazione NON inviata:", b);
       return b.id;
     },
     updateBooking: (id, patch) => {
@@ -748,7 +751,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v14-prenot</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v15</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
