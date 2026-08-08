@@ -197,13 +197,17 @@ const run = async (etichetta, promessa) => {
 
 const db = {
   async loadAll() {
+    // ATTENZIONE: Supabase restituisce max 1000 righe per default.
+    // .range(0, 49999) alza il limite: senza, le prenotazioni oltre la
+    // millesima non venivano caricate e sparivano dall'app.
     const [c, s, b, sc] = await Promise.all([
-      supabase.from("clienti").select("*"),
-      supabase.from("slots").select("*"),
-      supabase.from("bookings").select("*"),
-      supabase.from("schede").select("*"),
+      supabase.from("clienti").select("*").range(0, 49999),
+      supabase.from("slots").select("*").range(0, 49999),
+      supabase.from("bookings").select("*").range(0, 49999),
+      supabase.from("schede").select("*").range(0, 49999),
     ]);
     if (c.error) { console.error("[WFY] errore lettura clienti:", c.error); if (onDbError) onDbError("lettura: " + c.error.message); }
+    if (b.error) { console.error("[WFY] errore lettura prenotazioni:", b.error); if (onDbError) onDbError("lettura prenotazioni: " + b.error.message); }
     return {
       clienti: (c.data || []).map(rowToCliente),
       slots: (s.data || []).map(rowToSlot),
@@ -282,8 +286,7 @@ function useStore() {
 
   const reload = useCallback(async () => {
     const data = await db.loadAll();
-    console.log("[WFY] caricati:", data.clienti.length, "clienti,", data.slots.length, "slot,", data.bookings.length, "prenotazioni");
-    if (data.bookings.length) console.log("[WFY] prima prenotazione:", JSON.stringify(data.bookings[0]));
+    console.log("[WFY] caricati:", data.clienti.length, "clienti ·", data.slots.length, "slot ·", data.bookings.length, "prenotazioni");
     setState(data);
     setLoading(false);
   }, []);
@@ -752,7 +755,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v16-diag</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v17-limite</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
