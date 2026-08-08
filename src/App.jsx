@@ -334,16 +334,18 @@ function useStore() {
       const nome = parts.shift() || fullName.trim();
       const cognome = parts.join(" ");
       const c = makeCliente({ nome, cognome });
-      writingUntil.current = Date.now() + 6000;
+      writingUntil.current = Date.now() + 8000;
       setState((s) => ({ ...s, clienti: [...s.clienti, c] }));
-      // salva e verifica l'esito: se fallisce, avvisa e riprova senza mese_pagato
+      // la promessa si risolve SOLO quando il cliente è davvero nel database
+      // (prova completa, e se fallisce, fallback minimale) — così la
+      // prenotazione non parte mai prima che il cliente esista.
       const pronto = (async () => {
-        const ok = await db.insertCliente(c);
+        let ok = await db.insertCliente(c);
         if (!ok) {
-          console.error("[WFY] cliente rapido non salvato, riprovo minimale:", c);
-          await db.insertClienteMinimo(c); // fallback: solo campi base
+          console.error("[WFY] cliente rapido: insert completo fallito, riprovo minimale");
+          ok = await db.insertClienteMinimo(c);
         }
-        return ok;
+        return ok; // true solo se una delle due scritture è riuscita
       })();
       return { id: c.id, pronto };
     },
@@ -468,7 +470,13 @@ function useStore() {
       const b = makeBooking(data);
       markWrite();
       setState((s) => ({ ...s, bookings: [...s.bookings, b] }));
-      if (attendi) await attendi; // aspetta che il cliente esista nel DB
+      let clienteOk = true;
+      if (attendi) clienteOk = await attendi; // aspetta e verifica che il cliente esista nel DB
+      if (!clienteOk && data.clienteName) {
+        // il cliente non è stato salvato: registro la prenotazione col nome,
+        // così l'appuntamento resta comunque (senza violare la foreign key)
+        b.clienteId = null;
+      }
       db.insertBooking(b);
       return b.id;
     },
@@ -740,7 +748,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v13-diag</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v14-prenot</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1011,7 +1019,7 @@ function CalendarPage({ store, toast }) {
               setTimeout(() => toast(`⚠️ Piene, saltate: ${r.pieneSaltate.map(fmtShort).join(", ")}`, "err"), 400);
             }
           } else {
-            store.addBooking({ slotId, nota, clienteId }, attendi);
+            store.addBooking({ slotId, nota, clienteId, clienteName: scelta.type === "new" ? scelta.name : undefined }, attendi);
             setBookingFor(null);
             if (scelta.type === "new" && attendi) {
               attendi.then((ok) => toast(ok ? "Cliente creato e prenotato" : "⚠️ Cliente NON salvato nel database", ok ? "ok" : "err"));
