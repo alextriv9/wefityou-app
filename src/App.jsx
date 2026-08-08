@@ -214,6 +214,8 @@ const db = {
 
   // clienti
   insertCliente: (c) => run("salva cliente", supabase.from("clienti").insert({ id: c.id, nome: c.nome, cognome: c.cognome, telefono: c.telefono, email: c.email, note: c.note, mese_pagato: c.mesePagato })),
+  // fallback: solo i campi base, per quando una colonna extra non esiste nel DB
+  insertClienteMinimo: (c) => run("salva cliente (base)", supabase.from("clienti").insert({ id: c.id, nome: c.nome, cognome: c.cognome })),
   updateCliente: (id, p) => {
     const patch = { ...p };
     if ("mesePagato" in patch) { patch.mese_pagato = patch.mesePagato; delete patch.mesePagato; }
@@ -332,10 +334,18 @@ function useStore() {
       const nome = parts.shift() || fullName.trim();
       const cognome = parts.join(" ");
       const c = makeCliente({ nome, cognome });
-      writingUntil.current = Date.now() + 6000; // finestra più ampia: cliente + prenotazione
+      writingUntil.current = Date.now() + 6000;
       setState((s) => ({ ...s, clienti: [...s.clienti, c] }));
-      // ritorna id + promessa: chi prenota deve attendere che il cliente esista
-      return { id: c.id, pronto: db.insertCliente(c) };
+      // salva e verifica l'esito: se fallisce, avvisa e riprova senza mese_pagato
+      const pronto = (async () => {
+        const ok = await db.insertCliente(c);
+        if (!ok) {
+          console.error("[WFY] cliente rapido non salvato, riprovo minimale:", c);
+          await db.insertClienteMinimo(c); // fallback: solo campi base
+        }
+        return ok;
+      })();
+      return { id: c.id, pronto };
     },
     updateCliente: (id, patch) => {
       markWrite();
@@ -730,7 +740,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v12-fix</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v13-diag</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1003,7 +1013,11 @@ function CalendarPage({ store, toast }) {
           } else {
             store.addBooking({ slotId, nota, clienteId }, attendi);
             setBookingFor(null);
-            toast(scelta.type === "new" ? "Cliente creato e prenotato" : "Prenotazione aggiunta");
+            if (scelta.type === "new" && attendi) {
+              attendi.then((ok) => toast(ok ? "Cliente creato e prenotato" : "⚠️ Cliente NON salvato nel database", ok ? "ok" : "err"));
+            } else {
+              toast("Prenotazione aggiunta");
+            }
           }
         }} />
 
