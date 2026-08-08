@@ -282,6 +282,8 @@ function useStore() {
 
   const reload = useCallback(async () => {
     const data = await db.loadAll();
+    console.log("[WFY] caricati:", data.clienti.length, "clienti,", data.slots.length, "slot,", data.bookings.length, "prenotazioni");
+    if (data.bookings.length) console.log("[WFY] prima prenotazione:", JSON.stringify(data.bookings[0]));
     setState(data);
     setLoading(false);
   }, []);
@@ -472,13 +474,12 @@ function useStore() {
       setState((s) => ({ ...s, bookings: [...s.bookings, b] }));
       let clienteOk = true;
       if (attendi) {
-        try { clienteOk = await attendi; } // aspetta il cliente, ma non bloccarti se va storto
+        try { clienteOk = await attendi; }
         catch (e) { clienteOk = false; console.error("[WFY] attesa cliente fallita:", e); }
       }
-      if (!clienteOk) {
-        // il cliente non è nel DB: registro la prenotazione col solo nome
-        b.clienteId = null;
-      }
+      // se il cliente non è nel DB ma abbiamo il nome, salva la prenotazione
+      // senza id (col nome): resta comunque visibile
+      if (!clienteOk && b.clienteName) b.clienteId = null;
       const esito = await db.insertBooking(b);
       if (!esito) console.error("[WFY] prenotazione NON inviata:", b);
       return b.id;
@@ -751,7 +752,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v15</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v16-diag</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1022,7 +1023,12 @@ function CalendarPage({ store, toast }) {
               setTimeout(() => toast(`⚠️ Piene, saltate: ${r.pieneSaltate.map(fmtShort).join(", ")}`, "err"), 400);
             }
           } else {
-            store.addBooking({ slotId, nota, clienteId, clienteName: scelta.type === "new" ? scelta.name : undefined }, attendi);
+            // salva sempre il nome nella prenotazione: così si vede anche se
+            // il cliente non viene ritrovato per id al ricaricamento
+            const nomeDaSalvare = scelta.type === "new"
+              ? scelta.name
+              : (() => { const c = state.clienti.find((x) => x.id === clienteId); return c ? `${c.nome} ${c.cognome}`.trim() : undefined; })();
+            store.addBooking({ slotId, nota, clienteId, clienteName: nomeDaSalvare }, attendi);
             setBookingFor(null);
             if (scelta.type === "new" && attendi) {
               attendi.then((ok) => toast(ok ? "Cliente creato e prenotato" : "⚠️ Cliente NON salvato nel database", ok ? "ok" : "err"));
