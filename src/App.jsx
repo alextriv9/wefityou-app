@@ -78,8 +78,8 @@ const monthLabel = (offset = 0) => {
 /* ═══════════════════════════ data/ ════════════════════════════════════════ */
 
 const ADMIN_PIN = "807002";
-const STAFF = ["Alessandro", "Luca", "Niccolò", "Mattia", "Sara"];
-const MAX_POSTI = 8;
+const STAFF = ["Alessandro", "Luca", "Niccolò", "Mattia", "Sara", "Serena", "Erika"];
+const MAX_POSTI = 12;
 
 // Tipi di sessione → guida i colori (punto 7). PT = verde, gruppo = giallo.
 const SESSION_TYPES = {
@@ -715,7 +715,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v10-pagamenti</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v11</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1073,7 +1073,7 @@ function NewSlotModal({ open, day, onClose, onCreate, clienti = [], onRicorrenza
           {[30, 45, 60, 90].map((n) => <option key={n} value={n}>{n} min</option>)}
         </Select>
         <Select label="Posti" value={posti} onChange={(e) => setPosti(Number(e.target.value))}>
-          {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>{n}</option>)}
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => <option key={n} value={n}>{n}</option>)}
         </Select>
       </div>
 
