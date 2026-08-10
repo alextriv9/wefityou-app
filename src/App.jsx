@@ -195,24 +195,39 @@ const run = async (etichetta, promessa) => {
   }
 };
 
+// Il server Supabase restituisce al massimo 1000 righe per richiesta,
+// anche chiedendo di più. Quindi carichiamo a blocchi finché non finiscono.
+const caricaTutto = async (tabella) => {
+  const BLOCCO = 1000;
+  let tutte = [], da = 0;
+  for (let giro = 0; giro < 60; giro++) { // limite di sicurezza: 60.000 righe
+    const { data, error } = await supabase.from(tabella).select("*").range(da, da + BLOCCO - 1);
+    if (error) {
+      console.error("[WFY] errore lettura " + tabella + ":", error);
+      if (onDbError) onDbError("lettura " + tabella + ": " + error.message);
+      break;
+    }
+    if (!data || data.length === 0) break;
+    tutte = tutte.concat(data);
+    if (data.length < BLOCCO) break; // ultimo blocco
+    da += BLOCCO;
+  }
+  return tutte;
+};
+
 const db = {
   async loadAll() {
-    // ATTENZIONE: Supabase restituisce max 1000 righe per default.
-    // .range(0, 49999) alza il limite: senza, le prenotazioni oltre la
-    // millesima non venivano caricate e sparivano dall'app.
     const [c, s, b, sc] = await Promise.all([
-      supabase.from("clienti").select("*").range(0, 49999),
-      supabase.from("slots").select("*").range(0, 49999),
-      supabase.from("bookings").select("*").range(0, 49999),
-      supabase.from("schede").select("*").range(0, 49999),
+      caricaTutto("clienti"),
+      caricaTutto("slots"),
+      caricaTutto("bookings"),
+      caricaTutto("schede"),
     ]);
-    if (c.error) { console.error("[WFY] errore lettura clienti:", c.error); if (onDbError) onDbError("lettura: " + c.error.message); }
-    if (b.error) { console.error("[WFY] errore lettura prenotazioni:", b.error); if (onDbError) onDbError("lettura prenotazioni: " + b.error.message); }
     return {
-      clienti: (c.data || []).map(rowToCliente),
-      slots: (s.data || []).map(rowToSlot),
-      bookings: (b.data || []).map(rowToBooking),
-      schede: (sc.data || []).map(rowToScheda),
+      clienti: c.map(rowToCliente),
+      slots: s.map(rowToSlot),
+      bookings: b.map(rowToBooking),
+      schede: sc.map(rowToScheda),
     };
   },
 
@@ -755,7 +770,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v17-limite</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v18-blocchi</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
