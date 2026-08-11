@@ -294,7 +294,7 @@ function useStore() {
   // finestra di protezione: dopo una scrittura locale, ignora i reload
   // realtime per un attimo, così non sovrascrivono ciò che abbiamo appena fatto
   const writingUntil = useRef(0);
-  const markWrite = () => { writingUntil.current = Date.now() + 2500; };
+  const markWrite = () => { writingUntil.current = Date.now() + 4000; };
   // riferimento sempre aggiornato allo stato (serve alla ricorrenza)
   const stateRef = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
@@ -382,14 +382,17 @@ function useStore() {
     // segna/desegna il pagamento del mese corrente
     togglePagato: (id) => {
       const mese = meseCorrente();
-      let nuovo = null;
-      setState((s) => ({ ...s, clienti: s.clienti.map((c) => {
-        if (c.id !== id) return c;
-        nuovo = c.mesePagato === mese ? null : mese; // se già pagato questo mese → togli
-        return { ...c, mesePagato: nuovo };
-      }) }));
+      // calcolo il nuovo valore PRIMA di aggiornare lo schermo: così quello
+      // che salvo nel database è sempre certo (era la causa della spunta
+      // che spariva a volte dopo il ricaricamento)
+      const attuale = (stateRef.current.clienti || []).find((c) => c.id === id);
+      const nuovo = attuale && attuale.mesePagato === mese ? null : mese;
       markWrite();
-      db.updateCliente(id, { mesePagato: nuovo });
+      setState((s) => ({ ...s, clienti: s.clienti.map((c) => (c.id === id ? { ...c, mesePagato: nuovo } : c)) }));
+      db.updateCliente(id, { mesePagato: nuovo }).then((ok) => {
+        if (!ok) console.error("[WFY] pagamento NON salvato per cliente", id);
+      });
+      return nuovo;
     },
 
     // ── slots ──
@@ -770,7 +773,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v18-blocchi</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v19-pagamenti</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1336,11 +1339,21 @@ function ClientiPage({ store, toast }) {
         <Btn onClick={() => setCreating(true)}>+ Nuovo</Btn>
       </div>
 
-      {/* filtro pagamento */}
-      <div style={{ marginBottom: 20 }}>
+      {/* filtro pagamento + riepilogo mese */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 20, flexWrap: "wrap" }}>
         <Pill active={soloNonPagati} onClick={() => setSoloNonPagati((v) => !v)}>
           {soloNonPagati ? "✓ Solo da pagare" : "Mostra solo da pagare"}
         </Pill>
+        {(() => {
+          const mese = meseCorrente();
+          const tot = state.clienti.length;
+          const pagati = state.clienti.filter((c) => c.mesePagato === mese).length;
+          return (
+            <span style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid }}>
+              <strong style={{ color: pagati === tot && tot > 0 ? C.green : C.ink }}>{pagati}</strong> su {tot} hanno pagato
+            </span>
+          );
+        })()}
       </div>
 
       {list.length === 0 ? (
@@ -1366,7 +1379,11 @@ function ClientiPage({ store, toast }) {
                   </div>
                 </div>
                 {/* spunta pagamento mese corrente */}
-                <button onClick={(e) => { e.stopPropagation(); store.togglePagato(c.id); }}
+                <button onClick={(e) => {
+                    e.stopPropagation();
+                    const nuovo = store.togglePagato(c.id);
+                    toast(nuovo ? `✓ ${c.nome} — pagamento registrato` : `${c.nome} — pagamento rimosso`);
+                  }}
                   style={{ marginTop: 12, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                     background: pagato ? C.greenSoft : C.bg, border: `1.5px solid ${pagato ? C.green : C.border}`,
                     color: pagato ? C.green : C.inkMid, borderRadius: 10, padding: "9px 12px", cursor: "pointer",
