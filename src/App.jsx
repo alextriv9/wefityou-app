@@ -398,13 +398,16 @@ function useStore() {
     // ── slots ──
     addSlot: (data) => {
       const slot = makeSlot(data);
-      let dup = false;
+      // controllo doppioni PRIMA di aggiornare lo schermo: leggere il
+      // risultato dopo setState non era affidabile e a volte la sessione
+      // non veniva salvata nel database (o veniva duplicata)
+      const esiste = (stateRef.current.slots || []).some((x) => x.day === slot.day && x.time === slot.time);
+      if (esiste) return null; // già presente: non creo doppioni
       markWrite();
-      setState((s) => {
-        if (s.slots.find((x) => x.day === slot.day && x.time === slot.time)) { dup = true; return s; }
-        return { ...s, slots: [...s.slots, slot] };
+      setState((s) => ({ ...s, slots: [...s.slots, slot] }));
+      db.insertSlot(slot).then((ok) => {
+        if (!ok) console.error("[WFY] sessione NON salvata:", slot);
       });
-      if (!dup) db.insertSlot(slot);
       return slot;
     },
     updateSlot: (id, patch) => {
@@ -479,13 +482,16 @@ function useStore() {
     },
 
     removeSlot: (id) => {
-      let blocked = false;
+      // controllo prenotazioni PRIMA: leggere il risultato dopo setState
+      // non era affidabile e la sessione poteva restare nel database
+      const haPrenotazioni = (stateRef.current.bookings || []).some((b) => b.slotId === id);
+      if (haPrenotazioni) return false; // ha prenotazioni: non si elimina
       markWrite();
-      setState((s) => {
-        if (s.bookings.some((b) => b.slotId === id)) { blocked = true; return s; }
-        return { ...s, slots: s.slots.filter((x) => x.id !== id) };
+      setState((s) => ({ ...s, slots: s.slots.filter((x) => x.id !== id) }));
+      db.deleteSlot(id).then((ok) => {
+        if (!ok) console.error("[WFY] sessione NON eliminata nel database:", id);
       });
-      if (!blocked) db.deleteSlot(id);
+      return true;
     },
 
     // ── bookings ──
@@ -773,7 +779,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v19-pagamenti</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v20-sessioni</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -971,7 +977,10 @@ function CalendarPage({ store, toast }) {
                         <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
                           <Badge color={pieno ? C.red : C.green} bg={pieno ? C.redSoft : C.greenSoft}>{occ.length}/{posti}</Badge>
                           {occ.length === 0 && (
-                            <button onClick={() => { store.removeSlot(s.id); toast("Sessione eliminata"); }}
+                            <button onClick={() => {
+                                const ok = store.removeSlot(s.id);
+                                toast(ok ? "Sessione eliminata" : "⚠️ Ha prenotazioni: rimuovile prima", ok ? "ok" : "err");
+                              }}
                               title="Elimina sessione"
                               style={{ background: "transparent", border: "none", color: C.inkFaint, cursor: "pointer", fontSize: 14 }}>✕</button>
                           )}
@@ -1005,7 +1014,11 @@ function CalendarPage({ store, toast }) {
 
       {/* ── Modal: nuova sessione (con ricorrenza) ── */}
       <NewSlotModal open={!!newSlotFor} day={newSlotFor} clienti={state.clienti} onClose={() => setNewSlotFor(null)}
-        onCreate={(data) => { store.addSlot(data); setNewSlotFor(null); toast("Sessione creata"); }}
+        onCreate={(data) => {
+          const creata = store.addSlot(data);
+          setNewSlotFor(null);
+          toast(creata ? "Sessione creata" : "⚠️ Esiste già una sessione a quell'ora", creata ? "ok" : "err");
+        }}
         onRicorrenza={(cfg) => {
           const r = store.creaRicorrenza(cfg);
           setNewSlotFor(null);
