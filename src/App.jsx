@@ -27,6 +27,13 @@ const pad = (n) => String(n).padStart(2, "0");
 const toStr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
 const todayStr = () => toStr(new Date());
+// "Maria Rossi" → "Maria R." — usato nelle etichette degli appuntamenti
+const nomeConIniziale = (completo) => {
+  const p = String(completo || "").trim().split(/\s+/).filter(Boolean);
+  if (p.length === 0) return "";
+  if (p.length === 1) return p[0];
+  return `${p[0]} ${p[1].charAt(0).toUpperCase()}.`;
+};
 // mese corrente in formato "2026-08" — usato per la spunta pagamento
 const meseCorrente = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
 
@@ -779,7 +786,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v20-sessioni</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v21-nomi</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -878,7 +885,7 @@ function DashboardPage({ store, staff, goToCalendar }) {
                       ? <span style={{ fontFamily: FSANS, fontSize: 13, color: C.inkFaint }}>Nessuna prenotazione</span>
                       : occ.map((b) => (
                         <span key={b.id} style={{ fontFamily: FSANS, fontSize: 12, background: C.bg, color: C.ink, borderRadius: 6, padding: "2px 8px" }}>
-                          {nomeCliente(b).split(" ")[0]}
+                          {nomeConIniziale(nomeCliente(b))}
                         </span>
                       ))}
                   </div>
@@ -992,7 +999,7 @@ function CalendarPage({ store, toast }) {
                           {occ.map((b) => (
                             <button key={b.id} onClick={() => setEditBooking({ booking: b, slot: s })}
                               style={{ fontFamily: FSANS, fontSize: 12, background: C.bg, color: C.ink, border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>
-                              {nomeCliente(b).split(" ")[0]}
+                              {nomeConIniziale(nomeCliente(b))}
                             </button>
                           ))}
                         </div>
