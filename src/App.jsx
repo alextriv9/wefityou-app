@@ -503,6 +503,12 @@ function useStore() {
 
     // ── bookings ──
     addBooking: async (data, attendi) => {
+      // divieto doppioni: stesso cliente già prenotato in questa sessione
+      if (data.clienteId) {
+        const gia = (stateRef.current.bookings || []).some(
+          (b) => b.slotId === data.slotId && b.clienteId === data.clienteId);
+        if (gia) return { ok: false, motivo: "duplicato" };
+      }
       const b = makeBooking(data);
       markWrite();
       setState((s) => ({ ...s, bookings: [...s.bookings, b] }));
@@ -516,7 +522,7 @@ function useStore() {
       if (!clienteOk && b.clienteName) b.clienteId = null;
       const esito = await db.insertBooking(b);
       if (!esito) console.error("[WFY] prenotazione NON inviata:", b);
-      return b.id;
+      return { ok: true, id: b.id };
     },
     updateBooking: (id, patch) => {
       markWrite();
@@ -529,9 +535,17 @@ function useStore() {
       db.deleteBooking(id);
     },
     moveBooking: (bookingId, newSlotId) => {
+      // divieto doppioni: il cliente è già prenotato nella sessione di destinazione?
+      const bk = (stateRef.current.bookings || []).find((b) => b.id === bookingId);
+      if (bk && bk.clienteId) {
+        const gia = (stateRef.current.bookings || []).some(
+          (b) => b.id !== bookingId && b.slotId === newSlotId && b.clienteId === bk.clienteId);
+        if (gia) return false;
+      }
       markWrite();
       setState((s) => ({ ...s, bookings: s.bookings.map((b) => (b.id === bookingId ? { ...b, slotId: newSlotId } : b)) }));
       db.updateBooking(bookingId, { slotId: newSlotId });
+      return true;
     },
 
     // ── schede ──
@@ -786,7 +800,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v21-nomi</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v22-doppioni</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1069,7 +1083,12 @@ function CalendarPage({ store, toast }) {
             const nomeDaSalvare = scelta.type === "new"
               ? scelta.name
               : (() => { const c = state.clienti.find((x) => x.id === clienteId); return c ? `${c.nome} ${c.cognome}`.trim() : undefined; })();
-            store.addBooking({ slotId, nota, clienteId, clienteName: nomeDaSalvare }, attendi);
+            const esito = await store.addBooking({ slotId, nota, clienteId, clienteName: nomeDaSalvare }, attendi);
+            if (esito && esito.ok === false) {
+              // già prenotato in questa sessione: non creo il doppione
+              toast(`⚠️ ${nomeDaSalvare || "Il cliente"} è già prenotato in questa sessione`, "err");
+              return; // lascio il modale aperto per correggere
+            }
             setBookingFor(null);
             if (scelta.type === "new" && attendi) {
               attendi.then((ok) => toast(ok ? "Cliente creato e prenotato" : "⚠️ Cliente NON salvato nel database", ok ? "ok" : "err"));
@@ -1084,7 +1103,11 @@ function CalendarPage({ store, toast }) {
         slots={state.slots}
         onClose={() => setEditBooking(null)}
         onSave={(patch) => { store.updateBooking(editBooking.booking.id, patch); setEditBooking(null); toast("Prenotazione aggiornata"); }}
-        onMove={(newSlotId) => { store.moveBooking(editBooking.booking.id, newSlotId); setEditBooking(null); toast("Prenotazione spostata"); }}
+        onMove={(newSlotId) => {
+          const ok = store.moveBooking(editBooking.booking.id, newSlotId);
+          if (!ok) { toast("⚠️ Il cliente è già prenotato in quella sessione", "err"); return; }
+          setEditBooking(null); toast("Prenotazione spostata");
+        }}
         onDelete={() => { store.removeBooking(editBooking.booking.id); setEditBooking(null); toast("Prenotazione eliminata"); }}
       />
     </div>
