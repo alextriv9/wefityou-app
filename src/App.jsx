@@ -338,7 +338,15 @@ function useStore() {
     reload();
     const unsub = db.subscribe(() => { reloadSafe(); });
     // aggiorna quando la app torna in primo piano (utile su telefono)
-    const onFocus = () => reloadSafe();
+    // quando l'app torna in primo piano ricarico i dati.
+    // Se è rimasta in secondo piano a lungo (tipico sui telefoni, che
+    // "congelano" la pagina), forzo un ricaricamento completo.
+    let uscitaAlle = 0;
+    const onFocus = () => {
+      const fermaDaMolto = uscitaAlle && (Date.now() - uscitaAlle > 30000);
+      if (document.visibilityState === "hidden") { uscitaAlle = Date.now(); return; }
+      if (fermaDaMolto) { uscitaAlle = 0; reload(); } else { reloadSafe(); }
+    };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
     return () => { unsub(); window.removeEventListener("focus", onFocus); document.removeEventListener("visibilitychange", onFocus); };
@@ -800,7 +808,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v22-doppioni</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v23-cache</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
