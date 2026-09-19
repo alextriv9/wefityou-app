@@ -26,6 +26,23 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 const pad = (n) => String(n).padStart(2, "0");
 const toStr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
+// Stato del certificato medico a partire dalla data di scadenza.
+// verde = valido · giallo = scade entro 30 giorni · rosso = scaduto
+const statoCertificato = (scadenza) => {
+  if (!scadenza) return { stato: "assente", label: "Certificato mancante", colore: C_CERT.grigio, bg: C_CERT.grigioBg };
+  const oggi = todayStr();
+  if (scadenza < oggi) return { stato: "scaduto", label: `Scaduto il ${fmtShort(scadenza)}`, colore: C_CERT.rosso, bg: C_CERT.rossoBg };
+  const fra30 = addDays(oggi, 30);
+  if (scadenza <= fra30) return { stato: "inScadenza", label: `In scadenza il ${fmtShort(scadenza)}`, colore: C_CERT.ambra, bg: C_CERT.ambraBg };
+  return { stato: "valido", label: `Valido fino al ${fmtShort(scadenza)}`, colore: C_CERT.verde, bg: C_CERT.verdeBg };
+};
+const C_CERT = {
+  verde: "#2E9E55", verdeBg: "#EDFAF1",
+  ambra: "#B07800", ambraBg: "#FFF8E6",
+  rosso: "#E53E2F", rossoBg: "#FFF0EE",
+  grigio: "#888888", grigioBg: "#F5F5F0",
+};
+
 const todayStr = () => toStr(new Date());
 // "Maria Rossi" → "Maria R." — usato nelle etichette degli appuntamenti
 const nomeConIniziale = (completo) => {
@@ -101,6 +118,7 @@ const makeCliente = (o = {}) => ({
   id: uid(),
   nome: "", cognome: "", telefono: "", email: "", note: "",
   mesePagato: null, // es. "2026-08": mese in cui ha pagato (si azzera da solo)
+  certificato: null, // "2027-03-15": data di scadenza del certificato medico
   // stand-by pacchetti — pronti per il futuro, non usati nell'UI ora:
   pacchetto: null, seduteTotali: 0, seduteUsate: 0,
   createdAt: new Date().toISOString(),
@@ -178,7 +196,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 // ── mapping DB → app ──
 const rowToBooking = (r) => ({ id: r.id, slotId: r.slot_id, clienteId: r.cliente_id, clienteName: r.cliente_name || undefined, nota: r.nota || "", stato: r.stato || "prenotato", createdAt: r.created_at });
 const rowToScheda  = (r) => ({ id: r.id, clienteId: r.cliente_id, nome: r.nome, note: r.note || "", esercizi: r.esercizi || [], createdAt: r.created_at, updatedAt: r.updated_at });
-const rowToCliente = (r) => ({ id: r.id, nome: r.nome, cognome: r.cognome || "", telefono: r.telefono || "", email: r.email || "", note: r.note || "", mesePagato: r.mese_pagato || null, createdAt: r.created_at });
+const rowToCliente = (r) => ({ id: r.id, nome: r.nome, cognome: r.cognome || "", telefono: r.telefono || "", email: r.email || "", note: r.note || "", mesePagato: r.mese_pagato || null, certificato: r.certificato || null, createdAt: r.created_at });
 const rowToSlot    = (r) => ({ id: r.id, day: r.day, time: r.time, durata: r.durata, posti: r.posti, tipo: r.tipo || "gruppo", createdAt: r.created_at });
 
 // Segnalatore di errori: se una scrittura fallisce, lo mostra a schermo
@@ -239,7 +257,7 @@ const db = {
   },
 
   // clienti
-  insertCliente: (c) => run("salva cliente", supabase.from("clienti").insert({ id: c.id, nome: c.nome, cognome: c.cognome, telefono: c.telefono, email: c.email, note: c.note, mese_pagato: c.mesePagato })),
+  insertCliente: (c) => run("salva cliente", supabase.from("clienti").insert({ id: c.id, nome: c.nome, cognome: c.cognome, telefono: c.telefono, email: c.email, note: c.note, mese_pagato: c.mesePagato, certificato: c.certificato })),
   // fallback: solo i campi base, per quando una colonna extra non esiste nel DB
   insertClienteMinimo: (c) => run("salva cliente (base)", supabase.from("clienti").insert({ id: c.id, nome: c.nome, cognome: c.cognome })),
   updateCliente: (id, p) => {
@@ -808,7 +826,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v23-cache</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v24-certificati</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1323,11 +1341,14 @@ function EditBookingModal({ open, data, slots, onClose, onSave, onMove, onDelete
   useEffect(() => { if (open && data) { setNota(data.booking.nota || ""); setMoveTo(""); } }, [open, data]);
   if (!data) return null;
   const { booking, slot } = data;
-  // slot alternativi validi per lo spostamento (stesso schema, altri orari/giorni)
+  // sessioni vicine a quella attuale: da una settimana prima a tre settimane
+  // dopo. Prima la lista partiva dalla prima sessione mai creata (inizio
+  // agosto), rendendo lo spostamento inutilizzabile.
+  const daGiorno = addDays(slot.day, -7);
+  const aGiorno = addDays(slot.day, 21);
   const targets = slots
-    .filter((s) => s.id !== slot.id)
-    .sort((a, b) => (a.day + a.time).localeCompare(b.day + b.time))
-    .slice(0, 40);
+    .filter((s) => s.id !== slot.id && s.day >= daGiorno && s.day <= aGiorno)
+    .sort((a, b) => (a.day + a.time).localeCompare(b.day + b.time));
   return (
     <Modal open={open} onClose={onClose}>
       <div style={{ fontFamily: FSERIF, fontSize: 20, fontWeight: 800, color: C.ink, marginBottom: 4 }}>Prenotazione</div>
@@ -1339,9 +1360,16 @@ function EditBookingModal({ open, data, slots, onClose, onSave, onMove, onDelete
         <Select label="Sposta su un'altra sessione" value={moveTo} onChange={(e) => setMoveTo(e.target.value)}>
           <option value="">— Mantieni qui —</option>
           {targets.map((s) => (
-            <option key={s.id} value={s.id}>{fmtShort(s.day)} · {s.time} ({(SESSION_TYPES[s.tipo] || SESSION_TYPES.gruppo).label})</option>
+            <option key={s.id} value={s.id}>
+              {fmtWeekdayShort(s.day)} {fmtShort(s.day)} · {s.time} ({(SESSION_TYPES[s.tipo] || SESSION_TYPES.gruppo).label})
+            </option>
           ))}
         </Select>
+        {targets.length === 0 && (
+          <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginTop: 6 }}>
+            Nessun'altra sessione in questo periodo.
+          </div>
+        )}
       </div>
 
       <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
@@ -1362,6 +1390,7 @@ function ClientiPage({ store, toast }) {
   const { state } = store;
   const [q, setQ] = useState("");
   const [soloNonPagati, setSoloNonPagati] = useState(false);
+  const [soloCertScaduto, setSoloCertScaduto] = useState(false);
   const [edit, setEdit] = useState(null);  // cliente in modifica
   const [creating, setCreating] = useState(false);
 
@@ -1373,8 +1402,12 @@ function ClientiPage({ store, toast }) {
     if (s) base = base.filter((c) =>
       `${c.nome} ${c.cognome} ${c.telefono} ${c.email}`.toLowerCase().includes(s));
     if (soloNonPagati) base = base.filter((c) => c.mesePagato !== mese);
+    if (soloCertScaduto) base = base.filter((c) => {
+      const st = statoCertificato(c.certificato).stato;
+      return st === "scaduto" || st === "assente" || st === "inScadenza";
+    });
     return base;
-  }, [q, soloNonPagati, state.clienti]);
+  }, [q, soloNonPagati, soloCertScaduto, state.clienti]);
 
   const bookingsCount = (id) => state.bookings.filter((b) => b.clienteId === id).length;
 
@@ -1390,10 +1423,13 @@ function ClientiPage({ store, toast }) {
         <Btn onClick={() => setCreating(true)}>+ Nuovo</Btn>
       </div>
 
-      {/* filtro pagamento + riepilogo mese */}
+      {/* filtri + riepilogo mese */}
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 20, flexWrap: "wrap" }}>
         <Pill active={soloNonPagati} onClick={() => setSoloNonPagati((v) => !v)}>
           {soloNonPagati ? "✓ Solo da pagare" : "Mostra solo da pagare"}
+        </Pill>
+        <Pill active={soloCertScaduto} onClick={() => setSoloCertScaduto((v) => !v)}>
+          {soloCertScaduto ? "✓ Solo certificato da rinnovare" : "Certificato da rinnovare"}
         </Pill>
         {(() => {
           const mese = meseCorrente();
@@ -1414,6 +1450,7 @@ function ClientiPage({ store, toast }) {
           {list.map((c) => {
             const n = bookingsCount(c.id);
             const pagato = c.mesePagato === meseCorrente();
+            const cert = statoCertificato(c.certificato);
             return (
               <Card key={c.id} style={{ animation: "wfy-in .18s ease" }}>
                 <div onClick={() => setEdit(c)} style={{ cursor: "pointer" }}>
@@ -1423,10 +1460,16 @@ function ClientiPage({ store, toast }) {
                   {c.telefono && <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid, marginBottom: 3 }}>📞 {c.telefono}</div>}
                   {c.email && <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid, marginBottom: 3 }}>✉️ {c.email}</div>}
                   {c.note && <div style={{ fontFamily: FSANS, fontSize: 12, color: C.amber, marginTop: 6, lineHeight: 1.4 }}>⚕️ {c.note}</div>}
-                  <div style={{ marginTop: 10 }}>
+                  <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
                     <Badge color={n > 0 ? C.green : C.inkFaint} bg={n > 0 ? C.greenSoft : C.bg}>
                       {n} {n === 1 ? "prenotazione" : "prenotazioni"}
                     </Badge>
+                    <Badge color={cert.colore} bg={cert.bg}>
+                      {cert.stato === "valido" ? "✓" : "⚠️"} Certificato
+                    </Badge>
+                  </div>
+                  <div style={{ fontFamily: FSANS, fontSize: 11.5, color: cert.colore, marginTop: 6, fontWeight: 600 }}>
+                    {cert.label}
                   </div>
                 </div>
                 {/* spunta pagamento mese corrente */}
@@ -1464,18 +1507,18 @@ function ClientiPage({ store, toast }) {
 }
 
 function ClienteModal({ open, cliente, store, slots = [], bookings = [], toast, onClose, onSave, onDelete }) {
-  const [f, setF] = useState({ nome: "", cognome: "", telefono: "", email: "", note: "" });
-  const [schedaOpen, setSchedaOpen] = useState(null); // id scheda in editing
-  const [assignPick, setAssignPick] = useState(false);
+  const [f, setF] = useState({ nome: "", cognome: "", telefono: "", email: "", note: "", certificato: "" });
   useEffect(() => {
-    if (open) { setF({
+    if (open) setF({
       nome: cliente?.nome || "", cognome: cliente?.cognome || "",
       telefono: cliente?.telefono || "", email: cliente?.email || "", note: cliente?.note || "",
-    }); setSchedaOpen(null); setAssignPick(false); }
+      certificato: cliente?.certificato || "",
+    });
   }, [open, cliente]);
 
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
   const valid = f.nome.trim().length > 0;
+  const cert = statoCertificato(f.certificato);
 
   // sedute effettuate (slot con data ≤ oggi) per mese corrente e precedente
   const stats = useMemo(() => {
@@ -1492,12 +1535,6 @@ function ClienteModal({ open, cliente, store, slots = [], bookings = [], toast, 
     }
     return { curN, prevN, curLabel: monthLabel(0), prevLabel: monthLabel(-1) };
   }, [cliente, slots, bookings]);
-
-  // schede del cliente + modelli disponibili
-  const stateSchede = store?.state.schede || [];
-  const schedeCliente = cliente ? stateSchede.filter((s) => s.clienteId === cliente.id) : [];
-  const modelli = stateSchede.filter((s) => !s.clienteId);
-  const schedaAperta = stateSchede.find((s) => s.id === schedaOpen);
 
   return (
     <Modal open={open} onClose={onClose} width={520}>
@@ -1543,199 +1580,47 @@ function ClienteModal({ open, cliente, store, slots = [], bookings = [], toast, 
         </div>
       </div>
 
-      {/* SCHEDE — solo per cliente esistente */}
-      {cliente && store && (
-        <div style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.border}` }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <div style={{ fontFamily: FSERIF, fontSize: 16, fontWeight: 800, color: C.ink }}>Schede allenamento</div>
-            <div style={{ display: "flex", gap: 6 }}>
-              {modelli.length > 0 && <Btn variant="secondary" style={{ padding: "7px 12px", fontSize: 12 }} onClick={() => setAssignPick((v) => !v)}>Da modello</Btn>}
-              <Btn style={{ padding: "7px 12px", fontSize: 12 }} onClick={() => { const id = store.addScheda({ clienteId: cliente.id, nome: "Nuova scheda" }); setSchedaOpen(id); }}>+ Nuova</Btn>
-            </div>
-          </div>
+      {/* CERTIFICATO MEDICO */}
+      <div style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.border}` }}>
+        <div style={{ fontFamily: FSERIF, fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 12 }}>Certificato medico</div>
 
-          {/* picker modello */}
-          {assignPick && (
-            <div style={{ background: C.yellowSoft, border: `1.5px solid ${C.yellow}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
-              <div style={{ fontFamily: FSANS, fontSize: 12, fontWeight: 600, color: C.yellowText, marginBottom: 8 }}>Duplica un modello per questo cliente:</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {modelli.map((m) => (
-                  <button key={m.id} onClick={() => { const id = store.duplicaScheda(m.id, { clienteId: cliente.id, nome: m.nome }); setAssignPick(false); setSchedaOpen(id); toast && toast("Scheda assegnata"); }}
-                    style={{ textAlign: "left", background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 12px", cursor: "pointer", fontFamily: FSANS, fontSize: 14, color: C.ink }}>
-                    {m.nome} <span style={{ color: C.inkFaint, fontSize: 12 }}>· {m.esercizi.length} es.</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <label style={{ flex: "1 1 180px" }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: C.inkMid, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Scadenza</div>
+            <input type="date" value={f.certificato} onChange={set("certificato")}
+              style={{ width: "100%", background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", fontSize: 14, fontFamily: FSANS, outline: "none", boxSizing: "border-box", color: C.ink }} />
+          </label>
+          {f.certificato && (
+            <button onClick={() => setF((s) => ({ ...s, certificato: "" }))}
+              style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 9, padding: "10px 12px", cursor: "pointer", fontFamily: FSANS, fontSize: 12, fontWeight: 600, color: C.inkMid }}>
+              Svuota
+            </button>
           )}
-
-          {schedeCliente.length === 0
-            ? <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkFaint }}>Nessuna scheda assegnata.</div>
-            : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {schedeCliente.map((s) => (
-                  <button key={s.id} onClick={() => setSchedaOpen(s.id)}
-                    style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 14px", cursor: "pointer", fontFamily: FSANS }}>
-                    <span style={{ fontWeight: 600, color: C.ink, fontSize: 14 }}>{s.nome}</span>
-                    <Badge color={C.inkMid} bg={C.white}>{s.esercizi.length} es.</Badge>
-                  </button>
-                ))}
-              </div>
-            )}
         </div>
-      )}
+
+        {/* scorciatoia: certificato fatto oggi → scade fra un anno */}
+        <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+          <button onClick={() => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); setF((s) => ({ ...s, certificato: toStr(d) })); }}
+            style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 7, padding: "6px 10px", fontSize: 11, fontWeight: 600, fontFamily: FSANS, color: C.inkMid, cursor: "pointer" }}>
+            Consegnato oggi (+1 anno)
+          </button>
+        </div>
+
+        <div style={{ marginTop: 12, background: cert.bg, border: `1.5px solid ${cert.colore}`, borderRadius: 10, padding: "11px 14px",
+          fontFamily: FSANS, fontSize: 13.5, fontWeight: 700, color: cert.colore }}>
+          {cert.stato === "valido" ? "✓ " : "⚠️ "}{cert.label}
+        </div>
+      </div>
 
       <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
         <Btn onClick={() => onSave(f)} style={{ flex: 1, opacity: valid ? 1 : .4 }}>Salva</Btn>
         {cliente && onDelete && <Btn variant="danger" onClick={onDelete}>Elimina</Btn>}
         <Btn variant="secondary" onClick={onClose}>Chiudi</Btn>
       </div>
-
-      {/* editor scheda del cliente (modal sopra modal) */}
-      <Modal open={!!schedaAperta} onClose={() => setSchedaOpen(null)} width={560}>
-        {schedaAperta && (
-          <SchedaEditor scheda={schedaAperta}
-            clientiName={cliente ? `${cliente.nome} ${cliente.cognome}` : ""}
-            onChange={(sc) => store.updateScheda(schedaAperta.id, sc)}
-            onClose={() => setSchedaOpen(null)}
-            onDuplica={() => { const id = store.duplicaScheda(schedaAperta.id, { nome: schedaAperta.nome + " (copia)" }); setSchedaOpen(id); toast && toast("Scheda duplicata"); }}
-            onDelete={() => { store.removeScheda(schedaAperta.id); setSchedaOpen(null); toast && toast("Scheda eliminata"); }}
-          />
-        )}
-      </Modal>
     </Modal>
   );
 }
 
-
-/* ═══════════════════════════ components/ · Editor scheda ══════════════════
-   Riutilizzato per modelli e schede cliente. Card per esercizio (mobile-first):
-   nome grande + valori come mini-etichette, note sotto. */
-function SchedaEditor({ scheda, onChange, onClose, onDuplica, onDelete, clientiName }) {
-  const setField = (k, v) => onChange({ ...scheda, [k]: v });
-  const addEs = () => onChange({ ...scheda, esercizi: [...scheda.esercizi, makeEsercizio()] });
-  const setEs = (id, k, v) => onChange({ ...scheda, esercizi: scheda.esercizi.map((e) => (e.id === id ? { ...e, [k]: v } : e)) });
-  const dupEs = (id) => {
-    const i = scheda.esercizi.findIndex((e) => e.id === id);
-    const copy = makeEsercizio({ ...scheda.esercizi[i], id: undefined });
-    const arr = [...scheda.esercizi]; arr.splice(i + 1, 0, copy);
-    onChange({ ...scheda, esercizi: arr });
-  };
-  const delEs = (id) => onChange({ ...scheda, esercizi: scheda.esercizi.filter((e) => e.id !== id) });
-  const moveEs = (id, dir) => {
-    const i = scheda.esercizi.findIndex((e) => e.id === id);
-    const j = i + dir;
-    if (j < 0 || j >= scheda.esercizi.length) return;
-    const arr = [...scheda.esercizi];
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-    onChange({ ...scheda, esercizi: arr });
-  };
-
-  const miniField = (es, k, label, ph) => (
-    <label style={{ display: "block", flex: 1, minWidth: 64 }}>
-      <div style={{ fontSize: 9.5, fontWeight: 600, color: C.inkFaint, textTransform: "uppercase", letterSpacing: .4, marginBottom: 3, fontFamily: FSANS }}>{label}</div>
-      <input value={es[k]} onChange={(e) => setEs(es.id, k, e.target.value)} placeholder={ph}
-        style={{ width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: FSANS, outline: "none", boxSizing: "border-box", color: C.ink }} />
-    </label>
-  );
-
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 6 }}>
-        <div style={{ flex: 1 }}>
-          <input value={scheda.nome} onChange={(e) => setField("nome", e.target.value)} placeholder="Nome scheda"
-            style={{ width: "100%", background: "transparent", border: "none", borderBottom: `2px solid ${C.border}`, fontFamily: FSERIF, fontSize: 22, fontWeight: 800, color: C.ink, outline: "none", padding: "2px 0" }} />
-          <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginTop: 6 }}>
-            {scheda.clienteId ? `Assegnata a ${clientiName || "cliente"}` : "Modello riutilizzabile"} · {scheda.esercizi.length} esercizi
-          </div>
-        </div>
-        <button onClick={onClose} style={{ background: C.bg, border: "none", borderRadius: 8, width: 30, height: 30, cursor: "pointer", fontSize: 16, color: C.inkMid, flexShrink: 0 }}>✕</button>
-      </div>
-
-      {/* esercizi */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
-        {scheda.esercizi.length === 0 && <Empty icon="🏋️" text="Nessun esercizio. Aggiungi il primo." />}
-        {scheda.esercizi.map((es, idx) => (
-          <div key={es.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, animation: "wfy-in .16s ease" }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
-              <span style={{ fontFamily: FSERIF, fontWeight: 800, color: C.inkFaint, fontSize: 15, minWidth: 20 }}>{idx + 1}</span>
-              <input value={es.nome} onChange={(e) => setEs(es.id, "nome", e.target.value)} placeholder="Nome esercizio"
-                style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 14, fontWeight: 600, fontFamily: FSANS, outline: "none", color: C.ink }} />
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-              {miniField(es, "serie", "Serie", "3")}
-              {miniField(es, "ripetizioni", "Rip.", "8-12")}
-              {miniField(es, "recupero", "Rec.", "90\"")}
-              {miniField(es, "carico", "Carico", "10 kg")}
-            </div>
-            <input value={es.note} onChange={(e) => setEs(es.id, "note", e.target.value)} placeholder="Note (opzionale)"
-              style={{ width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: FSANS, outline: "none", boxSizing: "border-box", color: C.amber, marginBottom: 8 }} />
-            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              <button onClick={() => moveEs(es.id, -1)} disabled={idx === 0} title="Su" style={{ background: C.bg, border: "none", borderRadius: 7, width: 30, height: 28, cursor: idx === 0 ? "default" : "pointer", opacity: idx === 0 ? .3 : 1, fontSize: 13 }}>↑</button>
-              <button onClick={() => moveEs(es.id, 1)} disabled={idx === scheda.esercizi.length - 1} title="Giù" style={{ background: C.bg, border: "none", borderRadius: 7, width: 30, height: 28, cursor: "pointer", opacity: idx === scheda.esercizi.length - 1 ? .3 : 1, fontSize: 13 }}>↓</button>
-              <button onClick={() => dupEs(es.id)} title="Duplica" style={{ background: C.bg, border: "none", borderRadius: 7, width: 30, height: 28, cursor: "pointer", fontSize: 13 }}>⧉</button>
-              <button onClick={() => delEs(es.id)} title="Elimina" style={{ background: C.redSoft, color: C.red, border: "none", borderRadius: 7, width: 30, height: 28, cursor: "pointer", fontSize: 13 }}>✕</button>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <Btn variant="secondary" onClick={addEs} style={{ width: "100%", marginTop: 12 }}>+ Aggiungi esercizio</Btn>
-
-      {/* note generali */}
-      <div style={{ marginTop: 16 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: C.inkMid, marginBottom: 5, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Note scheda</div>
-        <textarea value={scheda.note} onChange={(e) => setField("note", e.target.value)} placeholder="Es. 3 volte a settimana, riscaldamento 10'…"
-          style={{ width: "100%", background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", color: C.ink, fontSize: 14, outline: "none", boxSizing: "border-box", fontFamily: FSANS, resize: "vertical", minHeight: 60 }} />
-      </div>
-
-      <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
-        {onDuplica && <Btn variant="secondary" onClick={onDuplica}>⧉ Duplica</Btn>}
-        {onDelete && <Btn variant="danger" onClick={onDelete}>Elimina scheda</Btn>}
-        <Btn onClick={onClose} style={{ flex: 1 }}>Fatto</Btn>
-      </div>
-    </div>
-  );
-}
-
-
-/* ═══════════════════════════ pages/ · Modelli ═════════════════════════════ */
-function ModelliPage({ store, toast }) {
-  const { state } = store;
-  const modelli = (state.schede || []).filter((s) => !s.clienteId);
-  const [openId, setOpenId] = useState(null);
-  const aperta = modelli.find((s) => s.id === openId);
-
-  return (
-    <div>
-      <SectionTitle right={<Btn onClick={() => { const id = store.addScheda({ nome: "Nuovo modello" }); setOpenId(id); }}>+ Nuovo</Btn>}>Modelli scheda</SectionTitle>
-
-      {modelli.length === 0 ? (
-        <Card><Empty icon="📋" text="Nessun modello. Creane uno riutilizzabile per i tuoi clienti." /></Card>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12 }}>
-          {modelli.map((s) => (
-            <Card key={s.id} onClick={() => setOpenId(s.id)} style={{ cursor: "pointer", animation: "wfy-in .16s ease" }}>
-              <div style={{ fontFamily: FSERIF, fontSize: 18, fontWeight: 800, color: C.ink, marginBottom: 6 }}>{s.nome}</div>
-              <Badge color={C.inkMid} bg={C.bg}>{s.esercizi.length} esercizi</Badge>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      <Modal open={!!aperta} onClose={() => setOpenId(null)} width={560}>
-        {aperta && (
-          <SchedaEditor scheda={aperta}
-            onChange={(sc) => store.updateScheda(aperta.id, sc)}
-            onClose={() => setOpenId(null)}
-            onDuplica={() => { const id = store.duplicaScheda(aperta.id, { nome: aperta.nome + " (copia)" }); setOpenId(id); toast("Modello duplicato"); }}
-            onDelete={() => { store.removeScheda(aperta.id); setOpenId(null); toast("Modello eliminato"); }}
-          />
-        )}
-      </Modal>
-    </div>
-  );
-}
 
 
 
@@ -1745,7 +1630,6 @@ const NAV = [
   { id: "dashboard", icon: "🏠", label: "Home" },
   { id: "calendario", icon: "📅", label: "Calendario" },
   { id: "clienti", icon: "👥", label: "Clienti" },
-  { id: "modelli", icon: "📋", label: "Modelli" },
 ];
 
 export default function App() {
@@ -1803,7 +1687,6 @@ export default function App() {
             {tab === "dashboard" && <DashboardPage store={store} staff={staff} goToCalendar={() => setTab("calendario")} />}
             {tab === "calendario" && <CalendarPage store={store} toast={push} />}
             {tab === "clienti" && <ClientiPage store={store} toast={push} />}
-            {tab === "modelli" && <ModelliPage store={store} toast={push} />}
           </>
         )}
       </main>
