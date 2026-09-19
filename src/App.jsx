@@ -826,7 +826,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v24-certificati</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v25-stats</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1624,12 +1624,208 @@ function ClienteModal({ open, cliente, store, slots = [], bookings = [], toast, 
 
 
 
+/* ═══════════════════════════ pages/ · Statistiche ═════════════════════════
+   Tre blocchi, sempre sugli ultimi 12 mesi (nulla viene cancellato: i dati
+   più vecchi restano nel database, semplicemente non entrano nei conteggi).
+   Conta solo le sedute già svolte, non le prenotazioni future. */
+function StatistichePage({ store }) {
+  const state = store && store.state ? store.state : {};
+
+  const dati = useMemo(() => {
+    const bookings = Array.isArray(state.bookings) ? state.bookings : [];
+    const slots = Array.isArray(state.slots) ? state.slots : [];
+    const clienti = Array.isArray(state.clienti) ? state.clienti : [];
+
+    const oggi = todayStr();
+    const inizio = addDays(oggi, -365);
+
+    // indice slot per accesso rapido
+    const perId = new Map();
+    for (const s of slots) if (s && s.id) perId.set(s.id, s);
+
+    // ── mensile: 12 mesi, dal più vecchio al più recente ──
+    const mesi = [];
+    for (let i = 11; i >= 0; i--) {
+      const b = monthBounds(-i);
+      mesi.push({ chiave: b.start.slice(0, 7), label: monthLabel(-i), n: 0 });
+    }
+    const indiceMese = new Map(mesi.map((m, i) => [m.chiave, i]));
+
+    // ── riempimento per giorno e per fascia oraria ──
+    const GG = ["Dom", "Lun", "Mar", "Mer", "Gio", "Ven", "Sab"];
+    const perGiorno = GG.map((g) => ({ label: g, posti: 0, occupati: 0 }));
+    const perOra = new Map();
+
+    const perCliente = new Map();
+    let totSedute = 0, totPosti = 0, totOccupati = 0;
+
+    // occupazione: conta per slot (una volta sola per sessione)
+    const occupatiPerSlot = new Map();
+    for (const b of bookings) {
+      if (!b || !b.slotId) continue;
+      const s = perId.get(b.slotId);
+      if (!s || !s.day) continue;
+      if (s.day < inizio || s.day > oggi) continue; // solo ultimi 12 mesi, già svolte
+      occupatiPerSlot.set(s.id, (occupatiPerSlot.get(s.id) || 0) + 1);
+      totSedute++;
+
+      const im = indiceMese.get(String(s.day).slice(0, 7));
+      if (im !== undefined) mesi[im].n++;
+
+      const k = b.clienteId || ("nome:" + (b.clienteName || "Ospite"));
+      perCliente.set(k, (perCliente.get(k) || 0) + 1);
+    }
+
+    for (const s of slots) {
+      if (!s || !s.day) continue;
+      if (s.day < inizio || s.day > oggi) continue;
+      const posti = Number(s.posti) || 0;
+      const occ = occupatiPerSlot.get(s.id) || 0;
+      totPosti += posti; totOccupati += occ;
+
+      const d = new Date(s.day + "T00:00:00");
+      const dow = isNaN(d.getTime()) ? null : d.getDay();
+      if (dow !== null && perGiorno[dow]) { perGiorno[dow].posti += posti; perGiorno[dow].occupati += occ; }
+
+      const ora = String(s.time || "").slice(0, 2);
+      if (ora) {
+        const cur = perOra.get(ora) || { label: ora + ":00", posti: 0, occupati: 0 };
+        cur.posti += posti; cur.occupati += occ;
+        perOra.set(ora, cur);
+      }
+    }
+
+    // classifica clienti
+    const classifica = [...perCliente.entries()].map(([k, n]) => {
+      if (String(k).startsWith("nome:")) return { id: k, nome: String(k).slice(5), n };
+      const c = clienti.find((x) => x && x.id === k);
+      return { id: k, nome: c ? `${c.nome || ""} ${c.cognome || ""}`.trim() : "Ospite", n };
+    }).sort((a, b) => b.n - a.n);
+
+    const fasce = [...perOra.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([, v]) => v);
+    // lunedì-domenica invece di domenica-sabato
+    const giorni = [1, 2, 3, 4, 5, 6, 0].map((i) => perGiorno[i]);
+
+    return {
+      mesi, giorni, fasce, classifica,
+      totSedute, totPosti, totOccupati,
+      riempimento: totPosti > 0 ? Math.round((totOccupati / totPosti) * 100) : 0,
+      attivi: classifica.length,
+    };
+  }, [state.bookings, state.slots, state.clienti]);
+
+  const maxMese = Math.max(1, ...dati.mesi.map((m) => m.n));
+  const maxCli = Math.max(1, ...(dati.classifica[0] ? [dati.classifica[0].n] : [1]));
+
+  const stat = (label, valore, colore) => (
+    <Card style={{ padding: 16 }}>
+      <div style={{ fontFamily: FSANS, fontSize: 10.5, fontWeight: 600, color: C.inkMid, textTransform: "uppercase", letterSpacing: .4 }}>{label}</div>
+      <div style={{ fontFamily: FSERIF, fontSize: 30, fontWeight: 800, color: colore || C.ink, lineHeight: 1.15, marginTop: 2 }}>{valore}</div>
+    </Card>
+  );
+
+  // barra riempimento: verde se pieno, giallo se medio, rosso se vuoto
+  const coloreOcc = (perc) => (perc >= 75 ? "#2E9E55" : perc >= 40 ? C.yellow : "#E53E2F");
+
+  const barra = (r, i) => {
+    const perc = r.posti > 0 ? Math.round((r.occupati / r.posti) * 100) : 0;
+    return (
+      <div key={r.label + i} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        <span style={{ fontFamily: FSANS, fontSize: 12, fontWeight: 700, color: C.inkMid, width: 44, flexShrink: 0 }}>{r.label}</span>
+        <div style={{ flex: 1, background: C.bg, borderRadius: 6, height: 16, overflow: "hidden", minWidth: 0 }}>
+          <div style={{ width: `${Math.min(perc, 100)}%`, height: "100%", background: coloreOcc(perc), borderRadius: 6 }} />
+        </div>
+        <span style={{ fontFamily: FSANS, fontSize: 11.5, color: C.inkMid, width: 78, textAlign: "right", flexShrink: 0 }}>
+          {r.occupati}/{r.posti} · {perc}%
+        </span>
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <SectionTitle>Statistiche</SectionTitle>
+      <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 16 }}>
+        Ultimi 12 mesi · solo sedute già svolte
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 24 }}>
+        {stat("Sedute svolte", dati.totSedute)}
+        {stat("Clienti attivi", dati.attivi)}
+        {stat("Posti occupati", `${dati.totOccupati}/${dati.totPosti}`)}
+        {stat("Riempimento", `${dati.riempimento}%`, coloreOcc(dati.riempimento))}
+      </div>
+
+      {/* ── andamento mensile ── */}
+      <SectionTitle>Andamento mensile</SectionTitle>
+      <Card style={{ marginBottom: 24 }}>
+        {dati.totSedute === 0 ? <Empty icon="📊" text="Nessuna seduta registrata." /> : (
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 150, marginTop: 4 }}>
+            {dati.mesi.map((m) => (
+              <div key={m.chiave} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 5, minWidth: 0 }}>
+                <span style={{ fontFamily: FSANS, fontSize: 10, fontWeight: 700, color: C.inkMid }}>{m.n || ""}</span>
+                <div title={`${m.label}: ${m.n}`}
+                  style={{ width: "100%", height: `${Math.max((m.n / maxMese) * 110, m.n > 0 ? 4 : 2)}px`,
+                    background: m.n > 0 ? C.yellow : C.border, borderRadius: "4px 4px 0 0" }} />
+                <span style={{ fontFamily: FSANS, fontSize: 9, color: C.inkFaint, textTransform: "capitalize" }}>
+                  {String(m.label).slice(0, 3)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* ── riempimento ── */}
+      <SectionTitle>Riempimento per giorno</SectionTitle>
+      <Card style={{ marginBottom: 20 }}>
+        {dati.totPosti === 0 ? <Empty icon="📅" text="Nessuna sessione nel periodo." /> : dati.giorni.map(barra)}
+      </Card>
+
+      <SectionTitle>Riempimento per fascia oraria</SectionTitle>
+      <Card style={{ marginBottom: 24 }}>
+        {dati.fasce.length === 0 ? <Empty icon="🕐" text="Nessuna sessione nel periodo." /> : dati.fasce.map(barra)}
+      </Card>
+
+      {/* ── classifica clienti ── */}
+      <SectionTitle>Clienti per frequenza</SectionTitle>
+      {dati.classifica.length === 0 ? (
+        <Card><Empty icon="👥" text="Nessuna presenza registrata." /></Card>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {dati.classifica.slice(0, 30).map((r, i) => (
+            <Card key={r.id} style={{ padding: "12px 16px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontFamily: FSERIF, fontWeight: 800, fontSize: 14, color: C.inkFaint, minWidth: 22 }}>{i + 1}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: FSANS, fontWeight: 700, fontSize: 14, color: C.ink, marginBottom: 5 }}>{r.nome || "Ospite"}</div>
+                  <div style={{ background: C.bg, borderRadius: 6, height: 7, overflow: "hidden" }}>
+                    <div style={{ width: `${(r.n / maxCli) * 100}%`, height: "100%", background: C.yellow, borderRadius: 6 }} />
+                  </div>
+                </div>
+                <span style={{ fontFamily: FSERIF, fontWeight: 800, fontSize: 20, color: C.ink, minWidth: 32, textAlign: "right" }}>{r.n}</span>
+              </div>
+            </Card>
+          ))}
+          {dati.classifica.length > 30 && (
+            <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkFaint, textAlign: "center", padding: 8 }}>
+              …e altri {dati.classifica.length - 30} clienti
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 /* ═══════════════════════════ app root ═════════════════════════════════════ */
 
 const NAV = [
   { id: "dashboard", icon: "🏠", label: "Home" },
   { id: "calendario", icon: "📅", label: "Calendario" },
   { id: "clienti", icon: "👥", label: "Clienti" },
+  { id: "statistiche", icon: "📊", label: "Statistiche" },
 ];
 
 export default function App() {
@@ -1687,6 +1883,7 @@ export default function App() {
             {tab === "dashboard" && <DashboardPage store={store} staff={staff} goToCalendar={() => setTab("calendario")} />}
             {tab === "calendario" && <CalendarPage store={store} toast={push} />}
             {tab === "clienti" && <ClientiPage store={store} toast={push} />}
+            {tab === "statistiche" && <StatistichePage store={store} />}
           </>
         )}
       </main>
