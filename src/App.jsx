@@ -455,7 +455,7 @@ function useStore() {
     // Se clienteId è passato, iscrive anche il cliente a ogni sessione.
     // Ritorna un riepilogo: create, riusate, saltate (slot pieni).
     creaRicorrenza: ({ dal, dataFine, giorni, time, durata, posti, tipo, clienteId, attendiCliente }) => {
-      const esito = { create: 0, riusate: 0, pieneSaltate: [], giaIscritto: 0, iscritti: 0 };
+      const esito = { create: 0, riusate: 0, pieneSaltate: [], altroOrario: [], giaIscritto: 0, iscritti: 0 };
       const nuoviSlot = [];
       const nuoveBooking = [];
 
@@ -483,8 +483,16 @@ function useStore() {
           if (clienteId) {
             const occupati = bookingsOra.filter((b) => b.slotId === slot.id);
             const gia = occupati.some((b) => b.clienteId === clienteId);
+            // già prenotato quel giorno in un ALTRO orario?
+            const altrove = bookingsOra.some((b) => {
+              if (b.clienteId !== clienteId || b.slotId === slot.id) return false;
+              const s = slotsOra.find((x) => x.id === b.slotId);
+              return s && s.day === g;
+            });
             if (gia) {
               esito.giaIscritto++;
+            } else if (altrove) {
+              esito.altroOrario.push(g); // quel giorno ha già un appuntamento
             } else if (occupati.length >= (slot.posti || MAX_POSTI)) {
               esito.pieneSaltate.push(g); // slot pieno: il cliente salta questo giorno
             } else {
@@ -529,11 +537,25 @@ function useStore() {
 
     // ── bookings ──
     addBooking: async (data, attendi) => {
-      // divieto doppioni: stesso cliente già prenotato in questa sessione
       if (data.clienteId) {
-        const gia = (stateRef.current.bookings || []).some(
-          (b) => b.slotId === data.slotId && b.clienteId === data.clienteId);
+        const bks = stateRef.current.bookings || [];
+        const sls = stateRef.current.slots || [];
+        // già prenotato in QUESTA sessione
+        const gia = bks.some((b) => b.slotId === data.slotId && b.clienteId === data.clienteId);
         if (gia) return { ok: false, motivo: "duplicato" };
+        // già prenotato lo STESSO GIORNO in un altro orario
+        const dest = sls.find((s) => s && s.id === data.slotId);
+        if (dest && dest.day) {
+          const altra = bks.find((b) => {
+            if (b.clienteId !== data.clienteId) return false;
+            const s = sls.find((x) => x && x.id === b.slotId);
+            return s && s.day === dest.day;
+          });
+          if (altra) {
+            const s = sls.find((x) => x && x.id === altra.slotId);
+            return { ok: false, motivo: "stessoGiorno", orario: s ? s.time : "" };
+          }
+        }
       }
       const b = makeBooking(data);
       markWrite();
@@ -561,17 +583,31 @@ function useStore() {
       db.deleteBooking(id);
     },
     moveBooking: (bookingId, newSlotId) => {
-      // divieto doppioni: il cliente è già prenotato nella sessione di destinazione?
-      const bk = (stateRef.current.bookings || []).find((b) => b.id === bookingId);
+      const bks = stateRef.current.bookings || [];
+      const sls = stateRef.current.slots || [];
+      const bk = bks.find((b) => b.id === bookingId);
       if (bk && bk.clienteId) {
-        const gia = (stateRef.current.bookings || []).some(
-          (b) => b.id !== bookingId && b.slotId === newSlotId && b.clienteId === bk.clienteId);
-        if (gia) return false;
+        // già prenotato nella sessione di destinazione?
+        const gia = bks.some((b) => b.id !== bookingId && b.slotId === newSlotId && b.clienteId === bk.clienteId);
+        if (gia) return { ok: false, motivo: "duplicato" };
+        // già prenotato lo stesso giorno in un altro orario?
+        const dest = sls.find((s) => s && s.id === newSlotId);
+        if (dest && dest.day) {
+          const altra = bks.find((b) => {
+            if (b.id === bookingId || b.clienteId !== bk.clienteId) return false;
+            const s = sls.find((x) => x && x.id === b.slotId);
+            return s && s.day === dest.day;
+          });
+          if (altra) {
+            const s = sls.find((x) => x && x.id === altra.slotId);
+            return { ok: false, motivo: "stessoGiorno", orario: s ? s.time : "" };
+          }
+        }
       }
       markWrite();
       setState((s) => ({ ...s, bookings: s.bookings.map((b) => (b.id === bookingId ? { ...b, slotId: newSlotId } : b)) }));
       db.updateBooking(bookingId, { slotId: newSlotId });
-      return true;
+      return { ok: true };
     },
 
     // ── schede ──
@@ -826,7 +862,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v26-orari</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v27-unagiorno</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1077,6 +1113,9 @@ function CalendarPage({ store, toast }) {
           if (r.pieneSaltate.length) {
             setTimeout(() => toast(`⚠️ Piene, cliente saltato: ${r.pieneSaltate.map(fmtShort).join(", ")}`, "err"), 400);
           }
+          if (r.altroOrario && r.altroOrario.length) {
+            setTimeout(() => toast(`⚠️ Già un appuntamento quel giorno: ${r.altroOrario.map(fmtShort).join(", ")}`, "err"), 800);
+          }
         }} />
 
       {/* ── Modal: prenota su slot ── */}
@@ -1103,6 +1142,9 @@ function CalendarPage({ store, toast }) {
             if (r.pieneSaltate.length) {
               setTimeout(() => toast(`⚠️ Piene, saltate: ${r.pieneSaltate.map(fmtShort).join(", ")}`, "err"), 400);
             }
+            if (r.altroOrario && r.altroOrario.length) {
+              setTimeout(() => toast(`⚠️ Già un appuntamento quel giorno: ${r.altroOrario.map(fmtShort).join(", ")}`, "err"), 800);
+            }
           } else {
             // salva sempre il nome nella prenotazione: così si vede anche se
             // il cliente non viene ritrovato per id al ricaricamento
@@ -1111,8 +1153,12 @@ function CalendarPage({ store, toast }) {
               : (() => { const c = state.clienti.find((x) => x.id === clienteId); return c ? `${c.nome} ${c.cognome}`.trim() : undefined; })();
             const esito = await store.addBooking({ slotId, nota, clienteId, clienteName: nomeDaSalvare }, attendi);
             if (esito && esito.ok === false) {
-              // già prenotato in questa sessione: non creo il doppione
-              toast(`⚠️ ${nomeDaSalvare || "Il cliente"} è già prenotato in questa sessione`, "err");
+              const chi = nomeDaSalvare || "Il cliente";
+              if (esito.motivo === "stessoGiorno") {
+                toast(`⚠️ ${chi} è già prenotato/a alle ${esito.orario} in questo giorno. Elimina prima quell'appuntamento.`, "err");
+              } else {
+                toast(`⚠️ ${chi} è già prenotato/a in questa sessione`, "err");
+              }
               return; // lascio il modale aperto per correggere
             }
             setBookingFor(null);
@@ -1130,8 +1176,15 @@ function CalendarPage({ store, toast }) {
         onClose={() => setEditBooking(null)}
         onSave={(patch) => { store.updateBooking(editBooking.booking.id, patch); setEditBooking(null); toast("Prenotazione aggiornata"); }}
         onMove={(newSlotId) => {
-          const ok = store.moveBooking(editBooking.booking.id, newSlotId);
-          if (!ok) { toast("⚠️ Il cliente è già prenotato in quella sessione", "err"); return; }
+          const esito = store.moveBooking(editBooking.booking.id, newSlotId);
+          if (esito && esito.ok === false) {
+            if (esito.motivo === "stessoGiorno") {
+              toast(`⚠️ Il cliente è già prenotato alle ${esito.orario} in quel giorno. Elimina prima quell'appuntamento.`, "err");
+            } else {
+              toast("⚠️ Il cliente è già prenotato in quella sessione", "err");
+            }
+            return;
+          }
           setEditBooking(null); toast("Prenotazione spostata");
         }}
         onDelete={() => { store.removeBooking(editBooking.booking.id); setEditBooking(null); toast("Prenotazione eliminata"); }}
