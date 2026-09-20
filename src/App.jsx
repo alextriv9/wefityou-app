@@ -826,7 +826,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v25-stats</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v26-orari</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1657,6 +1657,7 @@ function StatistichePage({ store }) {
     const perOra = new Map();
 
     const perCliente = new Map();
+    const presenzePerOrario = new Map(); // orario esatto → presenze (numeri assoluti)
     let totSedute = 0, totPosti = 0, totOccupati = 0;
 
     // occupazione: conta per slot (una volta sola per sessione)
@@ -1674,6 +1675,9 @@ function StatistichePage({ store }) {
 
       const k = b.clienteId || ("nome:" + (b.clienteName || "Ospite"));
       perCliente.set(k, (perCliente.get(k) || 0) + 1);
+
+      const orario = String(s.time || "").slice(0, 5);
+      if (orario) presenzePerOrario.set(orario, (presenzePerOrario.get(orario) || 0) + 1);
     }
 
     for (const s of slots) {
@@ -1706,8 +1710,12 @@ function StatistichePage({ store }) {
     // lunedì-domenica invece di domenica-sabato
     const giorni = [1, 2, 3, 4, 5, 6, 0].map((i) => perGiorno[i]);
 
+    const orari = [...presenzePerOrario.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([label, n]) => ({ label, n }));
+
     return {
-      mesi, giorni, fasce, classifica,
+      mesi, giorni, fasce, classifica, orari,
       totSedute, totPosti, totOccupati,
       riempimento: totPosti > 0 ? Math.round((totOccupati / totPosti) * 100) : 0,
       attivi: classifica.length,
@@ -1715,6 +1723,7 @@ function StatistichePage({ store }) {
   }, [state.bookings, state.slots, state.clienti]);
 
   const maxMese = Math.max(1, ...dati.mesi.map((m) => m.n));
+  const maxOrario = Math.max(1, ...dati.orari.map((o) => o.n));
   const maxCli = Math.max(1, ...(dati.classifica[0] ? [dati.classifica[0].n] : [1]));
 
   const stat = (label, valore, colore) => (
@@ -1770,6 +1779,24 @@ function StatistichePage({ store }) {
                 <span style={{ fontFamily: FSANS, fontSize: 9, color: C.inkFaint, textTransform: "capitalize" }}>
                   {String(m.label).slice(0, 3)}
                 </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* ── presenze per orario (numeri assoluti) ── */}
+      <SectionTitle>Presenze per orario</SectionTitle>
+      <Card style={{ marginBottom: 24 }}>
+        {dati.orari.length === 0 ? <Empty icon="🕐" text="Nessuna presenza registrata." /> : (
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 160, marginTop: 4, overflowX: "auto" }}>
+            {dati.orari.map((o) => (
+              <div key={o.label} style={{ flex: "1 0 34px", display: "flex", flexDirection: "column", alignItems: "center", gap: 5, minWidth: 34 }}>
+                <span style={{ fontFamily: FSANS, fontSize: 10.5, fontWeight: 700, color: C.ink }}>{o.n}</span>
+                <div title={`${o.label}: ${o.n} presenze`}
+                  style={{ width: "100%", height: `${Math.max((o.n / maxOrario) * 115, 4)}px`,
+                    background: C.ink, borderRadius: "4px 4px 0 0" }} />
+                <span style={{ fontFamily: FSANS, fontSize: 9.5, color: C.inkFaint, whiteSpace: "nowrap" }}>{o.label}</span>
               </div>
             ))}
           </div>
