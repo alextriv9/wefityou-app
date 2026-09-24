@@ -114,11 +114,19 @@ const SESSION_TYPES = {
 /* Modelli (forma dei dati). Tenerli qui rende esplicito lo schema e
    rispecchia le future tabelle Supabase. I campi "pacchetto" esistono
    ma NON sono mostrati nell'UI 1.0 (stand-by, come concordato). */
+const CATEGORIE = ["MyTraining", "Corsi", "Inattivo"];
+const COL_CATEGORIA = {
+  MyTraining: { colore: "#1F6FEB", bg: "#EAF2FF" },
+  Corsi:      { colore: "#2E9E55", bg: "#EDFAF1" },
+  Inattivo:   { colore: "#888888", bg: "#F5F5F0" },
+};
+
 const makeCliente = (o = {}) => ({
   id: uid(),
   nome: "", cognome: "", telefono: "", email: "", note: "",
   mesePagato: null, // es. "2026-08": mese in cui ha pagato (si azzera da solo)
   certificato: null, // "2027-03-15": data di scadenza del certificato medico
+  categoria: null, // "MyTraining" | "Corsi" | "Inattivo"
   // stand-by pacchetti — pronti per il futuro, non usati nell'UI ora:
   pacchetto: null, seduteTotali: 0, seduteUsate: 0,
   createdAt: new Date().toISOString(),
@@ -196,7 +204,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 // ── mapping DB → app ──
 const rowToBooking = (r) => ({ id: r.id, slotId: r.slot_id, clienteId: r.cliente_id, clienteName: r.cliente_name || undefined, nota: r.nota || "", stato: r.stato || "prenotato", createdAt: r.created_at });
 const rowToScheda  = (r) => ({ id: r.id, clienteId: r.cliente_id, nome: r.nome, note: r.note || "", esercizi: r.esercizi || [], createdAt: r.created_at, updatedAt: r.updated_at });
-const rowToCliente = (r) => ({ id: r.id, nome: r.nome, cognome: r.cognome || "", telefono: r.telefono || "", email: r.email || "", note: r.note || "", mesePagato: r.mese_pagato || null, certificato: r.certificato || null, createdAt: r.created_at });
+const rowToCliente = (r) => ({ id: r.id, nome: r.nome, cognome: r.cognome || "", telefono: r.telefono || "", email: r.email || "", note: r.note || "", mesePagato: r.mese_pagato || null, certificato: r.certificato || null, categoria: r.categoria || null, createdAt: r.created_at });
 const rowToSlot    = (r) => ({ id: r.id, day: r.day, time: r.time, durata: r.durata, posti: r.posti, tipo: r.tipo || "gruppo", createdAt: r.created_at });
 
 // Segnalatore di errori: se una scrittura fallisce, lo mostra a schermo
@@ -257,7 +265,7 @@ const db = {
   },
 
   // clienti
-  insertCliente: (c) => run("salva cliente", supabase.from("clienti").insert({ id: c.id, nome: c.nome, cognome: c.cognome, telefono: c.telefono, email: c.email, note: c.note, mese_pagato: c.mesePagato, certificato: c.certificato })),
+  insertCliente: (c) => run("salva cliente", supabase.from("clienti").insert({ id: c.id, nome: c.nome, cognome: c.cognome, telefono: c.telefono, email: c.email, note: c.note, mese_pagato: c.mesePagato, certificato: c.certificato, categoria: c.categoria })),
   // fallback: solo i campi base, per quando una colonna extra non esiste nel DB
   insertClienteMinimo: (c) => run("salva cliente (base)", supabase.from("clienti").insert({ id: c.id, nome: c.nome, cognome: c.cognome })),
   updateCliente: (id, p) => {
@@ -862,7 +870,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v27-unagiorno</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v28-categorie</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1444,6 +1452,7 @@ function ClientiPage({ store, toast }) {
   const [q, setQ] = useState("");
   const [soloNonPagati, setSoloNonPagati] = useState(false);
   const [soloCertScaduto, setSoloCertScaduto] = useState(false);
+  const [filtroCat, setFiltroCat] = useState("");
   const [edit, setEdit] = useState(null);  // cliente in modifica
   const [creating, setCreating] = useState(false);
 
@@ -1459,8 +1468,9 @@ function ClientiPage({ store, toast }) {
       const st = statoCertificato(c.certificato).stato;
       return st === "scaduto" || st === "assente" || st === "inScadenza";
     });
+    if (filtroCat) base = base.filter((c) => (c.categoria || "") === filtroCat);
     return base;
-  }, [q, soloNonPagati, soloCertScaduto, state.clienti]);
+  }, [q, soloNonPagati, soloCertScaduto, filtroCat, state.clienti]);
 
   const bookingsCount = (id) => state.bookings.filter((b) => b.clienteId === id).length;
 
@@ -1484,6 +1494,11 @@ function ClientiPage({ store, toast }) {
         <Pill active={soloCertScaduto} onClick={() => setSoloCertScaduto((v) => !v)}>
           {soloCertScaduto ? "✓ Solo certificato da rinnovare" : "Certificato da rinnovare"}
         </Pill>
+        {CATEGORIE.map((cat) => (
+          <Pill key={cat} active={filtroCat === cat} onClick={() => setFiltroCat((v) => (v === cat ? "" : cat))}>
+            {filtroCat === cat ? "✓ " : ""}{cat}
+          </Pill>
+        ))}
         {(() => {
           const mese = meseCorrente();
           const tot = state.clienti.length;
@@ -1514,6 +1529,10 @@ function ClientiPage({ store, toast }) {
                   {c.email && <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid, marginBottom: 3 }}>✉️ {c.email}</div>}
                   {c.note && <div style={{ fontFamily: FSANS, fontSize: 12, color: C.amber, marginTop: 6, lineHeight: 1.4 }}>⚕️ {c.note}</div>}
                   <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {c.categoria && (() => {
+                      const col = COL_CATEGORIA[c.categoria] || COL_CATEGORIA.Inattivo;
+                      return <Badge color={col.colore} bg={col.bg}>{c.categoria}</Badge>;
+                    })()}
                     <Badge color={n > 0 ? C.green : C.inkFaint} bg={n > 0 ? C.greenSoft : C.bg}>
                       {n} {n === 1 ? "prenotazione" : "prenotazioni"}
                     </Badge>
@@ -1560,12 +1579,13 @@ function ClientiPage({ store, toast }) {
 }
 
 function ClienteModal({ open, cliente, store, slots = [], bookings = [], toast, onClose, onSave, onDelete }) {
-  const [f, setF] = useState({ nome: "", cognome: "", telefono: "", email: "", note: "", certificato: "" });
+  const [f, setF] = useState({ nome: "", cognome: "", telefono: "", email: "", note: "", certificato: "", categoria: "" });
   useEffect(() => {
     if (open) setF({
       nome: cliente?.nome || "", cognome: cliente?.cognome || "",
       telefono: cliente?.telefono || "", email: cliente?.email || "", note: cliente?.note || "",
       certificato: cliente?.certificato || "",
+      categoria: cliente?.categoria || "",
     });
   }, [open, cliente]);
 
@@ -1631,6 +1651,30 @@ function ClienteModal({ open, cliente, store, slots = [], bookings = [], toast, 
           <textarea value={f.note} onChange={set("note")} placeholder="Es. lombalgia cronica, preferisce mattina…"
             style={{ width: "100%", background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "10px 13px", color: C.ink, fontSize: 14, outline: "none", boxSizing: "border-box", fontFamily: FSANS, resize: "vertical", minHeight: 70 }} />
         </div>
+      </div>
+
+      {/* CATEGORIA */}
+      <div style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.border}` }}>
+        <div style={{ fontFamily: FSERIF, fontSize: 16, fontWeight: 800, color: C.ink, marginBottom: 10 }}>Categoria</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {CATEGORIE.map((cat) => {
+            const on = f.categoria === cat;
+            const col = COL_CATEGORIA[cat] || COL_CATEGORIA.Inattivo;
+            return (
+              <button key={cat} onClick={() => setF((s) => ({ ...s, categoria: on ? "" : cat }))}
+                style={{ background: on ? col.bg : C.bg, color: on ? col.colore : C.inkMid,
+                  border: `1.5px solid ${on ? col.colore : C.border}`, borderRadius: 10,
+                  padding: "9px 14px", cursor: "pointer", fontFamily: FSANS, fontWeight: 700, fontSize: 13 }}>
+                {on ? "✓ " : ""}{cat}
+              </button>
+            );
+          })}
+        </div>
+        {!f.categoria && (
+          <div style={{ fontFamily: FSANS, fontSize: 11.5, color: C.inkFaint, marginTop: 8 }}>
+            Nessuna categoria assegnata
+          </div>
+        )}
       </div>
 
       {/* CERTIFICATO MEDICO */}
@@ -1763,12 +1807,19 @@ function StatistichePage({ store }) {
     // lunedì-domenica invece di domenica-sabato
     const giorni = [1, 2, 3, 4, 5, 6, 0].map((i) => perGiorno[i]);
 
+    // conteggio clienti per categoria (su tutto l'archivio, non sul periodo)
+    const categorie = CATEGORIE.map((cat) => ({
+      nome: cat,
+      n: clienti.filter((c) => c && c.categoria === cat).length,
+    }));
+    const senzaCategoria = clienti.filter((c) => c && !c.categoria).length;
+
     const orari = [...presenzePerOrario.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([label, n]) => ({ label, n }));
 
     return {
-      mesi, giorni, fasce, classifica, orari,
+      mesi, giorni, fasce, classifica, orari, categorie, senzaCategoria,
       totSedute, totPosti, totOccupati,
       riempimento: totPosti > 0 ? Math.round((totOccupati / totPosti) * 100) : 0,
       attivi: classifica.length,
@@ -1811,6 +1862,27 @@ function StatistichePage({ store }) {
         Ultimi 12 mesi · solo sedute già svolte
       </div>
 
+      {/* ── clienti per categoria ── */}
+      <SectionTitle>Clienti per categoria</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10, marginBottom: 24 }}>
+        {dati.categorie.map((cat) => {
+          const col = COL_CATEGORIA[cat.nome] || COL_CATEGORIA.Inattivo;
+          return (
+            <Card key={cat.nome} style={{ padding: 16, borderLeft: `4px solid ${col.colore}` }}>
+              <div style={{ fontFamily: FSANS, fontSize: 11, fontWeight: 700, color: col.colore, textTransform: "uppercase", letterSpacing: .3 }}>{cat.nome}</div>
+              <div style={{ fontFamily: FSERIF, fontSize: 30, fontWeight: 800, color: C.ink, lineHeight: 1.15, marginTop: 2 }}>{cat.n}</div>
+            </Card>
+          );
+        })}
+        {dati.senzaCategoria > 0 && (
+          <Card style={{ padding: 16, borderLeft: `4px solid ${C.border}` }}>
+            <div style={{ fontFamily: FSANS, fontSize: 11, fontWeight: 700, color: C.inkFaint, textTransform: "uppercase", letterSpacing: .3 }}>Senza categoria</div>
+            <div style={{ fontFamily: FSERIF, fontSize: 30, fontWeight: 800, color: C.inkFaint, lineHeight: 1.15, marginTop: 2 }}>{dati.senzaCategoria}</div>
+          </Card>
+        )}
+      </div>
+
+      <SectionTitle>Attività</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 24 }}>
         {stat("Sedute svolte", dati.totSedute)}
         {stat("Clienti attivi", dati.attivi)}
