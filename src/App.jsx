@@ -48,17 +48,17 @@ const todayStr = () => toStr(new Date());
    senza buchi: un orario delle 18:30 finisce nel pomeriggio, uno delle 22
    nella sera, così nessuna presenza resta fuori dal conteggio. */
 const FASCE_GIORNO = [
-  { id: "mattina",    label: "Mattina",    nota: "fino alle 12:59", colore: "#E8A800", bg: "#FFF8E6" },
-  { id: "pranzo",     label: "Pranzo",     nota: "13:00 – 14:59",   colore: "#1F6FEB", bg: "#EAF2FF" },
-  { id: "pomeriggio", label: "Pomeriggio", nota: "15:00 – 18:59",   colore: "#2E9E55", bg: "#EDFAF1" },
-  { id: "sera",       label: "Sera",       nota: "dalle 19:00",     colore: "#7A3FF2", bg: "#F3EDFF" },
+  { id: "mattina",    label: "Mattina",    nota: "fino alle 11:59", colore: "#E8A800", bg: "#FFF8E6" },
+  { id: "pranzo",     label: "Pranzo",     nota: "12:00 – 14:59",   colore: "#1F6FEB", bg: "#EAF2FF" },
+  { id: "pomeriggio", label: "Pomeriggio", nota: "15:00 – 19:59",   colore: "#2E9E55", bg: "#EDFAF1" },
+  { id: "sera",       label: "Sera",       nota: "dalle 20:00",     colore: "#7A3FF2", bg: "#F3EDFF" },
 ];
 const fasciaGiorno = (orario) => {
   const h = parseInt(String(orario || "").slice(0, 2), 10);
   if (isNaN(h)) return null;
-  if (h < 13) return "mattina";
+  if (h < 12) return "mattina";
   if (h < 15) return "pranzo";
-  if (h < 19) return "pomeriggio";
+  if (h < 20) return "pomeriggio";
   return "sera";
 };
 
@@ -935,7 +935,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v29-mobile</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v30-fasce</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
