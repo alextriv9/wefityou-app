@@ -44,6 +44,24 @@ const C_CERT = {
 };
 
 const todayStr = () => toStr(new Date());
+/* Fasce della giornata per le statistiche. I confini coprono tutte le ore
+   senza buchi: un orario delle 18:30 finisce nel pomeriggio, uno delle 22
+   nella sera, così nessuna presenza resta fuori dal conteggio. */
+const FASCE_GIORNO = [
+  { id: "mattina",    label: "Mattina",    nota: "fino alle 12:59", colore: "#E8A800", bg: "#FFF8E6" },
+  { id: "pranzo",     label: "Pranzo",     nota: "13:00 – 14:59",   colore: "#1F6FEB", bg: "#EAF2FF" },
+  { id: "pomeriggio", label: "Pomeriggio", nota: "15:00 – 18:59",   colore: "#2E9E55", bg: "#EDFAF1" },
+  { id: "sera",       label: "Sera",       nota: "dalle 19:00",     colore: "#7A3FF2", bg: "#F3EDFF" },
+];
+const fasciaGiorno = (orario) => {
+  const h = parseInt(String(orario || "").slice(0, 2), 10);
+  if (isNaN(h)) return null;
+  if (h < 13) return "mattina";
+  if (h < 15) return "pranzo";
+  if (h < 19) return "pomeriggio";
+  return "sera";
+};
+
 // "Maria Rossi" → "Maria R." — usato nelle etichette degli appuntamenti
 const nomeConIniziale = (completo) => {
   const p = String(completo || "").trim().split(/\s+/).filter(Boolean);
@@ -53,6 +71,17 @@ const nomeConIniziale = (completo) => {
 };
 // mese corrente in formato "2026-08" — usato per la spunta pagamento
 const meseCorrente = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
+// chiave mese con scostamento: 0 = questo mese, -1 = mese scorso
+const meseChiave = (offset = 0) => {
+  const n = new Date();
+  const d = new Date(n.getFullYear(), n.getMonth() + offset, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+// I mesi pagati stanno in un unico campo separati da virgola ("2026-09,2026-10"):
+// così quando cambia mese quello già segnato diventa da solo "mese scorso",
+// senza doverlo rimettere a mano.
+const mesiPagati = (c) => String((c && c.mesePagato) || "").split(",").map((x) => x.trim()).filter(Boolean);
+const haPagato = (c, offset = 0) => mesiPagati(c).includes(meseChiave(offset));
 
 const addDays = (dateStr, n) => {
   const d = new Date(dateStr + "T00:00:00");
@@ -420,20 +449,26 @@ function useStore() {
       setState((s) => ({ ...s, clienti: s.clienti.filter((c) => c.id !== id) }));
       db.deleteCliente(id);
     },
-    // segna/desegna il pagamento del mese corrente
-    togglePagato: (id) => {
-      const mese = meseCorrente();
+    // segna/desegna il pagamento di un mese (0 = questo mese, -1 = mese scorso)
+    togglePagato: (id, offset = 0) => {
+      const mese = meseChiave(offset);
       // calcolo il nuovo valore PRIMA di aggiornare lo schermo: così quello
       // che salvo nel database è sempre certo (era la causa della spunta
       // che spariva a volte dopo il ricaricamento)
       const attuale = (stateRef.current.clienti || []).find((c) => c.id === id);
-      const nuovo = attuale && attuale.mesePagato === mese ? null : mese;
+      const lista = mesiPagati(attuale);
+      const eraPagato = lista.includes(mese);
+      const aggiornata = eraPagato
+        ? lista.filter((m) => m !== mese)
+        : [...lista, mese];
+      // tiene solo gli ultimi 24 mesi, per non far crescere il campo all'infinito
+      const nuovo = aggiornata.sort().slice(-24).join(",") || null;
       markWrite();
       setState((s) => ({ ...s, clienti: s.clienti.map((c) => (c.id === id ? { ...c, mesePagato: nuovo } : c)) }));
       db.updateCliente(id, { mesePagato: nuovo }).then((ok) => {
         if (!ok) console.error("[WFY] pagamento NON salvato per cliente", id);
       });
-      return nuovo;
+      return !eraPagato; // true = ora risulta pagato
     },
 
     // ── slots ──
@@ -699,6 +734,36 @@ function useFonts() {
         @keyframes wfy-in { from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:none} }
         @keyframes wfy-toast { from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none} }
         @media (prefers-reduced-motion: reduce){ *{animation:none!important; transition:none!important} }
+
+        /* ── Finestre (modali) ──
+           Su Safari iPhone "90vh" viene calcolato sulla finestra SENZA le
+           barre del browser: il fondo del modale finiva fuori schermo e il
+           pulsante Salva non era raggiungibile. Qui si usa dvh (altezza
+           reale visibile) e i pulsanti restano sempre agganciati in basso. */
+        .wfy-ov{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;
+          align-items:center;justify-content:center;z-index:250;padding:16px;
+          overflow-y:auto;-webkit-overflow-scrolling:touch}
+        /* niente padding in fondo: lo fornisce la barra dei pulsanti, così
+           non resta una fessura in cui si vede scorrere il contenuto */
+        .wfy-md{background:#fff;border-radius:18px;padding:24px;padding-bottom:0;
+          max-width:100%;max-height:88vh;overflow-y:auto;
+          -webkit-overflow-scrolling:touch;animation:wfy-in .18s ease;
+          overscroll-behavior:contain}
+        @supports (height:100dvh){ .wfy-md{max-height:86dvh} }
+        .wfy-act{position:sticky;bottom:0;background:#fff;margin-top:20px;
+          padding:12px 0 calc(16px + env(safe-area-inset-bottom));
+          border-top:1px solid ${C.border};z-index:3}
+        @media (max-width:760px){
+          .wfy-ov{align-items:flex-start;padding:10px}
+          .wfy-md{padding:18px;padding-bottom:0;border-radius:16px;margin:auto 0}
+          /* iOS ingrandisce la pagina se un campo ha testo sotto i 16px */
+          .wfy-md input,.wfy-md select,.wfy-md textarea{font-size:16px}
+          .wfy-md input[type="date"],.wfy-md select{min-height:46px}
+          .wfy-md button{min-height:44px}
+        }
+        @media (max-width:480px){
+          .wfy-form{grid-template-columns:1fr !important}
+        }
       `;
       document.head.appendChild(st);
     }
@@ -784,8 +849,8 @@ const ToastHost = ({ toasts }) => (
 const Modal = ({ open, onClose, children, width = 420 }) => {
   if (!open) return null;
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 250, padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: C.white, borderRadius: 18, padding: 24, width, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", animation: "wfy-in .18s ease" }}>
+    <div className="wfy-ov" onClick={onClose}>
+      <div className="wfy-md" onClick={(e) => e.stopPropagation()} style={{ width }}>
         {children}
       </div>
     </div>
@@ -870,7 +935,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v28-categorie</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v29-mobile</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1324,7 +1389,7 @@ function NewSlotModal({ open, day, onClose, onCreate, clienti = [], onRicorrenza
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+      <div className="wfy-act" style={{ display: "flex", gap: 10 }}>
         <Btn onClick={conferma} style={{ flex: 1, opacity: (!ripeti || (giorni.length && fine)) ? 1 : .4 }}>
           {ripeti ? "Crea ricorrenza" : "Crea sessione"}
         </Btn>
@@ -1388,7 +1453,7 @@ function BookingModal({ open, slot, clienti, onClose, onConfirm }) {
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+      <div className="wfy-act" style={{ display: "flex", gap: 10 }}>
         <Btn onClick={build} style={{ flex: 1, opacity: sel ? 1 : .4 }}>{fisso ? "Iscrivi ogni settimana" : "Conferma"}</Btn>
         <Btn variant="secondary" onClick={onClose}>Annulla</Btn>
       </div>
@@ -1433,7 +1498,7 @@ function EditBookingModal({ open, data, slots, onClose, onSave, onMove, onDelete
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
+      <div className="wfy-act" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         {moveTo
           ? <Btn onClick={() => onMove(moveTo)} style={{ flex: 1 }}>Sposta qui</Btn>
           : <Btn onClick={() => onSave({ nota })} style={{ flex: 1 }}>Salva</Btn>}
@@ -1458,12 +1523,11 @@ function ClientiPage({ store, toast }) {
 
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
-    const mese = meseCorrente();
     let base = [...state.clienti].sort((a, b) =>
       `${a.cognome} ${a.nome}`.localeCompare(`${b.cognome} ${b.nome}`, "it"));
     if (s) base = base.filter((c) =>
       `${c.nome} ${c.cognome} ${c.telefono} ${c.email}`.toLowerCase().includes(s));
-    if (soloNonPagati) base = base.filter((c) => c.mesePagato !== mese);
+    if (soloNonPagati) base = base.filter((c) => !haPagato(c, 0));
     if (soloCertScaduto) base = base.filter((c) => {
       const st = statoCertificato(c.certificato).stato;
       return st === "scaduto" || st === "assente" || st === "inScadenza";
@@ -1500,9 +1564,8 @@ function ClientiPage({ store, toast }) {
           </Pill>
         ))}
         {(() => {
-          const mese = meseCorrente();
           const tot = state.clienti.length;
-          const pagati = state.clienti.filter((c) => c.mesePagato === mese).length;
+          const pagati = state.clienti.filter((c) => haPagato(c, 0)).length;
           return (
             <span style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid }}>
               <strong style={{ color: pagati === tot && tot > 0 ? C.green : C.ink }}>{pagati}</strong> su {tot} hanno pagato
@@ -1517,7 +1580,8 @@ function ClientiPage({ store, toast }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12 }}>
           {list.map((c) => {
             const n = bookingsCount(c.id);
-            const pagato = c.mesePagato === meseCorrente();
+            const pagato = haPagato(c, 0);
+            const pagatoPrec = haPagato(c, -1);
             const cert = statoCertificato(c.certificato);
             return (
               <Card key={c.id} style={{ animation: "wfy-in .18s ease" }}>
@@ -1544,18 +1608,24 @@ function ClientiPage({ store, toast }) {
                     {cert.label}
                   </div>
                 </div>
-                {/* spunta pagamento mese corrente */}
-                <button onClick={(e) => {
-                    e.stopPropagation();
-                    const nuovo = store.togglePagato(c.id);
-                    toast(nuovo ? `✓ ${c.nome} — pagamento registrato` : `${c.nome} — pagamento rimosso`);
-                  }}
-                  style={{ marginTop: 12, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                    background: pagato ? C.greenSoft : C.bg, border: `1.5px solid ${pagato ? C.green : C.border}`,
-                    color: pagato ? C.green : C.inkMid, borderRadius: 10, padding: "9px 12px", cursor: "pointer",
-                    fontFamily: FSANS, fontWeight: 700, fontSize: 13 }}>
-                  {pagato ? "✓ Pagato questo mese" : "○ Segna come pagato"}
-                </button>
+                {/* spunte pagamento: mese corrente e mese scorso */}
+                <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
+                  {[{ off: 0, lab: "Questo mese", on: pagato }, { off: -1, lab: "Mese scorso", on: pagatoPrec }].map((m) => (
+                    <button key={m.off} onClick={(e) => {
+                        e.stopPropagation();
+                        const ora = store.togglePagato(c.id, m.off);
+                        toast(ora
+                          ? `✓ ${c.nome} — ${m.lab.toLowerCase()} pagato`
+                          : `${c.nome} — ${m.lab.toLowerCase()}: pagamento rimosso`);
+                      }}
+                      style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                        background: m.on ? C.greenSoft : C.bg, border: `1.5px solid ${m.on ? C.green : C.border}`,
+                        color: m.on ? C.green : C.inkMid, borderRadius: 10, padding: "9px 8px", cursor: "pointer",
+                        fontFamily: FSANS, fontWeight: 700, fontSize: 12, lineHeight: 1.2 }}>
+                      {m.on ? "✓" : "○"} {m.lab}
+                    </button>
+                  ))}
+                </div>
               </Card>
             );
           })}
@@ -1629,19 +1699,28 @@ function ClienteModal({ open, cliente, store, slots = [], bookings = [], toast, 
         </div>
       )}
 
-      {/* spunta pagamento mese corrente (solo in modifica) */}
+      {/* spunte pagamento: mese corrente e mese scorso (solo in modifica) */}
       {cliente && store && (
-        <button onClick={() => store.togglePagato(cliente.id)}
-          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 18,
-            background: cliente.mesePagato === meseCorrente() ? C.greenSoft : C.bg,
-            border: `1.5px solid ${cliente.mesePagato === meseCorrente() ? C.green : C.border}`,
-            color: cliente.mesePagato === meseCorrente() ? C.green : C.inkMid,
-            borderRadius: 10, padding: "11px 14px", cursor: "pointer", fontFamily: FSANS, fontWeight: 700, fontSize: 14 }}>
-          {cliente.mesePagato === meseCorrente() ? "✓ Ha pagato questo mese" : "○ Segna come pagato questo mese"}
-        </button>
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.inkMid, marginBottom: 7, textTransform: "uppercase", letterSpacing: .5, fontFamily: FSANS }}>Pagamenti</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {[{ off: 0, lab: monthLabel(0) }, { off: -1, lab: monthLabel(-1) }].map((m) => {
+              const on = haPagato(cliente, m.off);
+              return (
+                <button key={m.off} onClick={() => store.togglePagato(cliente.id, m.off)}
+                  style={{ flex: "1 1 140px", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                    background: on ? C.greenSoft : C.bg, border: `1.5px solid ${on ? C.green : C.border}`,
+                    color: on ? C.green : C.inkMid, borderRadius: 10, padding: "11px 12px", cursor: "pointer",
+                    fontFamily: FSANS, fontWeight: 700, fontSize: 13, textTransform: "capitalize" }}>
+                  {on ? "✓" : "○"} {m.lab}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <div className="wfy-form" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Input label="Nome *" value={f.nome} onChange={set("nome")} placeholder="Maria" autoFocus />
         <Input label="Cognome" value={f.cognome} onChange={set("cognome")} placeholder="Rossi" />
         <Input label="Telefono" value={f.telefono} onChange={set("telefono")} placeholder="333 123 4567" />
@@ -1709,7 +1788,7 @@ function ClienteModal({ open, cliente, store, slots = [], bookings = [], toast, 
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
+      <div className="wfy-act" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <Btn onClick={() => onSave(f)} style={{ flex: 1, opacity: valid ? 1 : .4 }}>Salva</Btn>
         {cliente && onDelete && <Btn variant="danger" onClick={onDelete}>Elimina</Btn>}
         <Btn variant="secondary" onClick={onClose}>Chiudi</Btn>
@@ -1755,6 +1834,7 @@ function StatistichePage({ store }) {
 
     const perCliente = new Map();
     const presenzePerOrario = new Map(); // orario esatto → presenze (numeri assoluti)
+    const presenzePerFascia = new Map(); // mattina/pranzo/pomeriggio/sera
     let totSedute = 0, totPosti = 0, totOccupati = 0;
 
     // occupazione: conta per slot (una volta sola per sessione)
@@ -1774,7 +1854,11 @@ function StatistichePage({ store }) {
       perCliente.set(k, (perCliente.get(k) || 0) + 1);
 
       const orario = String(s.time || "").slice(0, 5);
-      if (orario) presenzePerOrario.set(orario, (presenzePerOrario.get(orario) || 0) + 1);
+      if (orario) {
+        presenzePerOrario.set(orario, (presenzePerOrario.get(orario) || 0) + 1);
+        const fa = fasciaGiorno(orario);
+        if (fa) presenzePerFascia.set(fa, (presenzePerFascia.get(fa) || 0) + 1);
+      }
     }
 
     for (const s of slots) {
@@ -1818,8 +1902,11 @@ function StatistichePage({ store }) {
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([label, n]) => ({ label, n }));
 
+    // presenze raggruppate per fascia della giornata
+    const fasceGiorno = FASCE_GIORNO.map((f) => ({ ...f, n: presenzePerFascia.get(f.id) || 0 }));
+
     return {
-      mesi, giorni, fasce, classifica, orari, categorie, senzaCategoria,
+      mesi, giorni, fasce, classifica, orari, fasceGiorno, categorie, senzaCategoria,
       totSedute, totPosti, totOccupati,
       riempimento: totPosti > 0 ? Math.round((totOccupati / totPosti) * 100) : 0,
       attivi: classifica.length,
@@ -1927,6 +2014,24 @@ function StatistichePage({ store }) {
           </div>
         )}
       </Card>
+
+      {/* ── presenze per fascia della giornata ── */}
+      <SectionTitle>Presenze per fascia</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 24 }}>
+        {dati.fasceGiorno.map((f) => {
+          const perc = dati.totSedute > 0 ? Math.round((f.n / dati.totSedute) * 100) : 0;
+          return (
+            <Card key={f.id} style={{ padding: 16, borderLeft: `4px solid ${f.colore}` }}>
+              <div style={{ fontFamily: FSANS, fontSize: 11, fontWeight: 700, color: f.colore, textTransform: "uppercase", letterSpacing: .3 }}>{f.label}</div>
+              <div style={{ fontFamily: FSERIF, fontSize: 30, fontWeight: 800, color: C.ink, lineHeight: 1.15, marginTop: 2 }}>{f.n}</div>
+              <div style={{ fontFamily: FSANS, fontSize: 11, color: C.inkFaint, marginTop: 2 }}>{f.nota} · {perc}%</div>
+              <div style={{ background: C.bg, borderRadius: 6, height: 6, overflow: "hidden", marginTop: 8 }}>
+                <div style={{ width: `${perc}%`, height: "100%", background: f.colore, borderRadius: 6 }} />
+              </div>
+            </Card>
+          );
+        })}
+      </div>
 
       {/* ── riempimento ── */}
       <SectionTitle>Riempimento per giorno</SectionTitle>
