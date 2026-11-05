@@ -127,6 +127,23 @@ const monthLabel = (offset = 0) => {
   return d.toLocaleDateString("it-IT", { month: "long", year: "numeric" });
 };
 
+/* ─────────────────────────────────────────────────────────────────────────
+   DA QUANDO PARTONO LE STATISTICHE
+   Agosto e i mesi precedenti restano nel database ma non vengono conteggiati.
+   Per cambiare periodo in futuro basta modificare questa sola data.
+   ───────────────────────────────────────────────────────────────────────── */
+const INIZIO_STATISTICHE = "2026-09-01";
+const MAX_MESI_GRAFICO = 24; // oltre, il grafico mostra solo i più recenti
+
+// quanti mesi ci sono fra il mese d'inizio e quello corrente (minimo 1)
+const mesiDaInizio = () => {
+  const d0 = new Date(INIZIO_STATISTICHE + "T00:00:00");
+  if (isNaN(d0.getTime())) return 1;
+  const n = new Date();
+  const diff = (n.getFullYear() - d0.getFullYear()) * 12 + (n.getMonth() - d0.getMonth()) + 1;
+  return Math.max(1, Math.min(diff, MAX_MESI_GRAFICO));
+};
+
 
 /* ═══════════════════════════ data/ ════════════════════════════════════════ */
 
@@ -935,7 +952,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v31-fasce</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v32-settembre</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1801,7 +1818,7 @@ function ClienteModal({ open, cliente, store, slots = [], bookings = [], toast, 
 
 
 /* ═══════════════════════════ pages/ · Statistiche ═════════════════════════
-   Tre blocchi, sempre sugli ultimi 12 mesi (nulla viene cancellato: i dati
+   Tre blocchi, dalla data in INIZIO_STATISTICHE a oggi (nulla viene cancellato: i dati
    più vecchi restano nel database, semplicemente non entrano nei conteggi).
    Conta solo le sedute già svolte, non le prenotazioni future. */
 function StatistichePage({ store }) {
@@ -1813,15 +1830,17 @@ function StatistichePage({ store }) {
     const clienti = Array.isArray(state.clienti) ? state.clienti : [];
 
     const oggi = todayStr();
-    const inizio = addDays(oggi, -365);
+    // Le statistiche partono da questa data (vedi INIZIO_STATISTICHE in cima
+    // al file): tutto ciò che precede resta nel database ma non viene contato.
+    const inizio = INIZIO_STATISTICHE;
 
     // indice slot per accesso rapido
     const perId = new Map();
     for (const s of slots) if (s && s.id) perId.set(s.id, s);
 
-    // ── mensile: 12 mesi, dal più vecchio al più recente ──
+    // ── mensile: dal mese d'inizio a quello corrente ──
     const mesi = [];
-    for (let i = 11; i >= 0; i--) {
+    for (let i = mesiDaInizio() - 1; i >= 0; i--) {
       const b = monthBounds(-i);
       mesi.push({ chiave: b.start.slice(0, 7), label: monthLabel(-i), n: 0 });
     }
@@ -1843,7 +1862,7 @@ function StatistichePage({ store }) {
       if (!b || !b.slotId) continue;
       const s = perId.get(b.slotId);
       if (!s || !s.day) continue;
-      if (s.day < inizio || s.day > oggi) continue; // solo ultimi 12 mesi, già svolte
+      if (s.day < inizio || s.day > oggi) continue; // solo nel periodo, già svolte
       occupatiPerSlot.set(s.id, (occupatiPerSlot.get(s.id) || 0) + 1);
       totSedute++;
 
@@ -1946,7 +1965,7 @@ function StatistichePage({ store }) {
     <div>
       <SectionTitle>Statistiche</SectionTitle>
       <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 16 }}>
-        Ultimi 12 mesi · solo sedute già svolte
+        Da {fmtShort(INIZIO_STATISTICHE)} a oggi · solo sedute già svolte
       </div>
 
       {/* ── clienti per categoria ── */}
