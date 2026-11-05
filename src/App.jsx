@@ -952,7 +952,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v32-settembre</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v34-coerente</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1846,15 +1846,18 @@ function StatistichePage({ store }) {
     }
     const indiceMese = new Map(mesi.map((m, i) => [m.chiave, i]));
 
-    // ── riempimento per giorno e per fascia oraria ──
+    // ── presenze per giorno della settimana ──
+    // Oltre al totale tengo l'elenco delle giornate effettivamente aperte,
+    // così la media è "presenze per giornata di apertura" e non viene
+    // diluita dai giorni in cui il centro era chiuso.
     const GG = ["Dom", "Lun", "Mar", "Mer", "Gio", "Ven", "Sab"];
-    const perGiorno = GG.map((g) => ({ label: g, posti: 0, occupati: 0 }));
-    const perOra = new Map();
+    const perGiorno = GG.map((g) => ({ label: g, occupati: 0, giornate: new Set() }));
 
     const perCliente = new Map();
     const presenzePerOrario = new Map(); // orario esatto → presenze (numeri assoluti)
     const presenzePerFascia = new Map(); // mattina/pranzo/pomeriggio/sera
-    let totSedute = 0, totPosti = 0, totOccupati = 0;
+    let totSedute = 0, nSessioni = 0;
+    const giornateAperte = new Set(); // giornate con almeno una sessione svolta
 
     // occupazione: conta per slot (una volta sola per sessione)
     const occupatiPerSlot = new Map();
@@ -1883,19 +1886,15 @@ function StatistichePage({ store }) {
     for (const s of slots) {
       if (!s || !s.day) continue;
       if (s.day < inizio || s.day > oggi) continue;
-      const posti = Number(s.posti) || 0;
       const occ = occupatiPerSlot.get(s.id) || 0;
-      totPosti += posti; totOccupati += occ;
+      nSessioni++;
+      giornateAperte.add(s.day);
 
       const d = new Date(s.day + "T00:00:00");
       const dow = isNaN(d.getTime()) ? null : d.getDay();
-      if (dow !== null && perGiorno[dow]) { perGiorno[dow].posti += posti; perGiorno[dow].occupati += occ; }
-
-      const ora = String(s.time || "").slice(0, 2);
-      if (ora) {
-        const cur = perOra.get(ora) || { label: ora + ":00", posti: 0, occupati: 0 };
-        cur.posti += posti; cur.occupati += occ;
-        perOra.set(ora, cur);
+      if (dow !== null && perGiorno[dow]) {
+        perGiorno[dow].occupati += occ;
+        perGiorno[dow].giornate.add(s.day); // giornata aperta, anche se vuota
       }
     }
 
@@ -1906,9 +1905,17 @@ function StatistichePage({ store }) {
       return { id: k, nome: c ? `${c.nome || ""} ${c.cognome || ""}`.trim() : "Ospite", n };
     }).sort((a, b) => b.n - a.n);
 
-    const fasce = [...perOra.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([, v]) => v);
-    // lunedì-domenica invece di domenica-sabato
-    const giorni = [1, 2, 3, 4, 5, 6, 0].map((i) => perGiorno[i]);
+    // giorni della settimana, da lunedì a domenica, con la media di presenze
+    const giorni = [1, 2, 3, 4, 5, 6, 0].map((i) => {
+      const g = perGiorno[i];
+      const aperture = g.giornate.size;
+      return {
+        label: g.label,
+        presenze: g.occupati,
+        aperture,
+        media: aperture > 0 ? g.occupati / aperture : 0,
+      };
+    });
 
     // conteggio clienti per categoria (su tutto l'archivio, non sul periodo)
     const categorie = CATEGORIE.map((cat) => ({
@@ -1921,13 +1928,18 @@ function StatistichePage({ store }) {
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([label, n]) => ({ label, n }));
 
+    // stessi dati, ordinati per presenze: gli orari più frequentati
+    const orariTop = [...orari].sort((a, b) => b.n - a.n);
+
     // presenze raggruppate per fascia della giornata
     const fasceGiorno = FASCE_GIORNO.map((f) => ({ ...f, n: presenzePerFascia.get(f.id) || 0 }));
 
     return {
-      mesi, giorni, fasce, classifica, orari, fasceGiorno, categorie, senzaCategoria,
-      totSedute, totPosti, totOccupati,
-      riempimento: totPosti > 0 ? Math.round((totOccupati / totPosti) * 100) : 0,
+      mesi, giorni, classifica, orari, orariTop, fasceGiorno, categorie, senzaCategoria,
+      totSedute, nSessioni,
+      giornate: giornateAperte.size,
+      mediaSeduta: nSessioni > 0 ? totSedute / nSessioni : 0,
+      mediaGiorno: giornateAperte.size > 0 ? totSedute / giornateAperte.size : 0,
       attivi: classifica.length,
     };
   }, [state.bookings, state.slots, state.clienti]);
@@ -1935,31 +1947,47 @@ function StatistichePage({ store }) {
   const maxMese = Math.max(1, ...dati.mesi.map((m) => m.n));
   const maxOrario = Math.max(1, ...dati.orari.map((o) => o.n));
   const maxCli = Math.max(1, ...(dati.classifica[0] ? [dati.classifica[0].n] : [1]));
+  const maxMedia = Math.max(0.1, ...dati.giorni.map((g) => g.media));
+  const maxTop = Math.max(1, ...(dati.orariTop[0] ? [dati.orariTop[0].n] : [1]));
 
-  const stat = (label, valore, colore) => (
+  const stat = (label, valore, nota) => (
     <Card style={{ padding: 16 }}>
       <div style={{ fontFamily: FSANS, fontSize: 10.5, fontWeight: 600, color: C.inkMid, textTransform: "uppercase", letterSpacing: .4 }}>{label}</div>
-      <div style={{ fontFamily: FSERIF, fontSize: 30, fontWeight: 800, color: colore || C.ink, lineHeight: 1.15, marginTop: 2 }}>{valore}</div>
+      <div style={{ fontFamily: FSERIF, fontSize: 30, fontWeight: 800, color: C.ink, lineHeight: 1.15, marginTop: 2 }}>{valore}</div>
+      {nota && <div style={{ fontFamily: FSANS, fontSize: 11, color: C.inkFaint, marginTop: 2 }}>{nota}</div>}
     </Card>
   );
 
-  // barra riempimento: verde se pieno, giallo se medio, rosso se vuoto
-  const coloreOcc = (perc) => (perc >= 75 ? "#2E9E55" : perc >= 40 ? C.yellow : "#E53E2F");
+  // numero con una cifra decimale, virgola all'italiana (8.2 → "8,2")
+  const unDecimale = (n) => (Math.round(n * 10) / 10).toFixed(1).replace(".", ",");
 
-  const barra = (r, i) => {
-    const perc = r.posti > 0 ? Math.round((r.occupati / r.posti) * 100) : 0;
+  // riga per la media di presenze giornaliere
+  const barraMedia = (r, i) => {
+    const perc = (r.media / maxMedia) * 100;
     return (
       <div key={r.label + i} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-        <span style={{ fontFamily: FSANS, fontSize: 12, fontWeight: 700, color: C.inkMid, width: 44, flexShrink: 0 }}>{r.label}</span>
+        <span style={{ fontFamily: FSANS, fontSize: 12, fontWeight: 700, color: C.inkMid, width: 40, flexShrink: 0 }}>{r.label}</span>
         <div style={{ flex: 1, background: C.bg, borderRadius: 6, height: 16, overflow: "hidden", minWidth: 0 }}>
-          <div style={{ width: `${Math.min(perc, 100)}%`, height: "100%", background: coloreOcc(perc), borderRadius: 6 }} />
+          <div style={{ width: `${Math.max(Math.min(perc, 100), r.media > 0 ? 3 : 0)}%`, height: "100%", background: C.ink, borderRadius: 6 }} />
         </div>
-        <span style={{ fontFamily: FSANS, fontSize: 11.5, color: C.inkMid, width: 78, textAlign: "right", flexShrink: 0 }}>
-          {r.occupati}/{r.posti} · {perc}%
+        <span style={{ fontFamily: FSANS, fontSize: 11.5, color: C.inkMid, width: 104, textAlign: "right", flexShrink: 0 }}>
+          <b style={{ color: C.ink, fontSize: 13 }}>{unDecimale(r.media)}</b> · {r.aperture} {r.aperture === 1 ? "giorno" : "giorni"}
         </span>
       </div>
     );
   };
+
+  // riga della classifica orari (presenze assolute, senza posti)
+  const barraOrario = (r, i) => (
+    <div key={r.label} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+      <span style={{ fontFamily: FSERIF, fontWeight: 800, fontSize: 13, color: C.inkFaint, width: 18, flexShrink: 0 }}>{i + 1}</span>
+      <span style={{ fontFamily: FSANS, fontSize: 12.5, fontWeight: 700, color: C.ink, width: 46, flexShrink: 0 }}>{r.label}</span>
+      <div style={{ flex: 1, background: C.bg, borderRadius: 6, height: 16, overflow: "hidden", minWidth: 0 }}>
+        <div style={{ width: `${Math.max((r.n / maxTop) * 100, r.n > 0 ? 3 : 0)}%`, height: "100%", background: C.yellow, borderRadius: 6 }} />
+      </div>
+      <span style={{ fontFamily: FSERIF, fontWeight: 800, fontSize: 15, color: C.ink, width: 46, textAlign: "right", flexShrink: 0 }}>{r.n}</span>
+    </div>
+  );
 
   return (
     <div>
@@ -1990,10 +2018,10 @@ function StatistichePage({ store }) {
 
       <SectionTitle>Attività</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 24 }}>
-        {stat("Sedute svolte", dati.totSedute)}
+        {stat("Presenze totali", dati.totSedute)}
         {stat("Clienti attivi", dati.attivi)}
-        {stat("Posti occupati", `${dati.totOccupati}/${dati.totPosti}`)}
-        {stat("Riempimento", `${dati.riempimento}%`, coloreOcc(dati.riempimento))}
+        {stat("Media per seduta", unDecimale(dati.mediaSeduta), `su ${dati.nSessioni} sessioni`)}
+        {stat("Media giornaliera", unDecimale(dati.mediaGiorno), `su ${dati.giornate} giornate`)}
       </div>
 
       {/* ── andamento mensile ── */}
@@ -2052,15 +2080,22 @@ function StatistichePage({ store }) {
         })}
       </div>
 
-      {/* ── riempimento ── */}
-      <SectionTitle>Riempimento per giorno</SectionTitle>
-      <Card style={{ marginBottom: 20 }}>
-        {dati.totPosti === 0 ? <Empty icon="📅" text="Nessuna sessione nel periodo." /> : dati.giorni.map(barra)}
+      {/* ── media presenze per giorno della settimana ── */}
+      <SectionTitle>Media presenze per giorno</SectionTitle>
+      <div style={{ fontFamily: FSANS, fontSize: 11.5, color: C.inkFaint, marginBottom: 8 }}>
+        Media per giornata di apertura · accanto, quante giornate sono state conteggiate
+      </div>
+      <Card style={{ marginBottom: 24 }}>
+        {dati.totSedute === 0 ? <Empty icon="📅" text="Nessuna sessione nel periodo." /> : dati.giorni.map(barraMedia)}
       </Card>
 
-      <SectionTitle>Riempimento per fascia oraria</SectionTitle>
+      {/* ── classifica degli orari più frequentati ── */}
+      <SectionTitle>Orari più frequentati</SectionTitle>
+      <div style={{ fontFamily: FSANS, fontSize: 11.5, color: C.inkFaint, marginBottom: 8 }}>
+        Presenze totali per orario, dal più frequentato
+      </div>
       <Card style={{ marginBottom: 24 }}>
-        {dati.fasce.length === 0 ? <Empty icon="🕐" text="Nessuna sessione nel periodo." /> : dati.fasce.map(barra)}
+        {dati.orariTop.length === 0 ? <Empty icon="🕐" text="Nessuna presenza nel periodo." /> : dati.orariTop.map(barraOrario)}
       </Card>
 
       {/* ── classifica clienti ── */}
