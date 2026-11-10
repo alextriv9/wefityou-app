@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1001,7 +1001,14 @@ function useFonts() {
         .wfy-h3{font-size:16px;letter-spacing:-.2px}
         @media (max-width:760px){ .wfy-h2{font-size:21px} .wfy-h3{font-size:15px} }
         /* ── Tocchi: niente lampo grigio su iPhone, bordo visibile da tastiera ── */
-        button{-webkit-tap-highlight-color:transparent}
+        button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+        /* menu in basso: tasti grandi, niente selezione testo, risposta visibile al tocco */
+        .wfy-tab{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+        .wfy-tab *{pointer-events:none}
+        .wfy-tab:active{background:#262626 !important}
+        /* avvisi: sul telefono stanno sopra il menu, e non bloccano mai i tocchi */
+        .wfy-toasts{bottom:20px}
+        @media (max-width:760px){ .wfy-toasts{bottom:calc(84px + env(safe-area-inset-bottom))} }
         button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{
           outline:2px solid ${C.ink};outline-offset:2px}
         .wfy-chip-add:hover{border-color:${C.ink};color:${C.ink}}
@@ -1083,7 +1090,7 @@ const Empty = ({ icon, text }) => (
 
 // Toast container
 const ToastHost = ({ toasts }) => (
-  <div style={{ position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", gap: 8, zIndex: 300, alignItems: "center" }}>
+  <div className="wfy-toasts" style={{ position: "fixed", left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", gap: 8, zIndex: 300, alignItems: "center", pointerEvents: "none" }}>
     {toasts.map((t) => (
       <div key={t.id} style={{
         background: t.kind === "err" ? "#8B1A10" : C.ink, color: t.kind === "err" ? "#fff" : C.yellow,
@@ -1187,7 +1194,7 @@ function LoginPage({ onLogin }) {
           <Logo size={60} />
           <div>
             <div style={{ fontFamily: FSERIF, fontSize: 24, fontWeight: 800, color: C.ink, letterSpacing: -.5, lineHeight: 1.1 }}>We Fit You</div>
-            <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginTop: 3 }}>Accesso staff · v36-estetica</div>
+            <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginTop: 3 }}>Accesso staff · v37-menu</div>
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -2539,6 +2546,9 @@ export default function App() {
   const { toasts, push } = useToast();
   const [staff, setStaff] = useState(null);
   const [tab, setTab] = useState("dashboard");
+  // Il menu si colora subito al tocco; la pagina (che può essere pesante da
+  // disegnare) arriva un attimo dopo, senza bloccare il tocco
+  const pagina = useDeferredValue(tab);
   const [mobile, setMobile] = useState(typeof window !== "undefined" && window.innerWidth < 760);
 
   // mostra a schermo gli errori di salvataggio invece di ingoiarli
@@ -2580,7 +2590,7 @@ export default function App() {
       )}
 
       {/* Contenuto */}
-      <main style={{ flex: 1, padding: mobile ? "14px 14px 96px" : "30px 36px", overflowY: "auto", maxWidth: mobile ? "100%" : 1000, width: "100%" }}>
+      <main style={{ flex: 1, padding: mobile ? "14px 14px 104px" : "30px 36px", overflowY: "auto", maxWidth: mobile ? "100%" : 1000, width: "100%" }}>
         {mobile && (
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
             <Logo size={34} />
@@ -2597,19 +2607,19 @@ export default function App() {
           </div>
         ) : (
           <>
-            {tab === "dashboard" && <DashboardPage store={store} staff={staff} goToCalendar={() => setTab("calendario")} />}
-            {tab === "calendario" && <CalendarPage store={store} toast={push} />}
-            {tab === "clienti" && <ClientiPage store={store} toast={push} />}
-            {tab === "statistiche" && <StatistichePage store={store} />}
+            {pagina === "dashboard" && <DashboardPage store={store} staff={staff} goToCalendar={() => setTab("calendario")} />}
+            {pagina === "calendario" && <CalendarPage store={store} toast={push} />}
+            {pagina === "clienti" && <ClientiPage store={store} toast={push} />}
+            {pagina === "statistiche" && <StatistichePage store={store} />}
           </>
         )}
       </main>
 
       {/* Bottom nav mobile */}
       {mobile && (
-        <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.dark, display: "flex", zIndex: 100, borderTop: "1px solid #2a2a2a", padding: "8px 0 calc(8px + env(safe-area-inset-bottom))" }}>
+        <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.dark, display: "flex", zIndex: 100, borderTop: "1px solid #2a2a2a", padding: "0 0 max(12px, env(safe-area-inset-bottom))" }}>
           {NAV.map((n) => (
-            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", cursor: "pointer", color: tab === n.id ? C.yellow : "#a8a8a8", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "5px 0 3px", fontFamily: FSANS }}>
+            <button key={n.id} className="wfy-tab" onClick={() => setTab(n.id)} style={{ flex: 1, minWidth: 0, minHeight: 58, background: "transparent", border: "none", cursor: "pointer", color: tab === n.id ? C.yellow : "#a8a8a8", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, padding: 0, fontFamily: FSANS }}>
               <Icona nome={n.icon} size={22} />
               <span style={{ fontSize: 10.5, fontWeight: 600 }}>{n.label}</span>
             </button>
