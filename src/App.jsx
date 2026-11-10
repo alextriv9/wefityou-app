@@ -257,6 +257,10 @@ const rowToSlot    = (r) => ({ id: r.id, day: r.day, time: r.time, durata: r.dur
 // invece di fallire in silenzio (era il motivo per cui non vedevamo nulla).
 let onDbError = null;
 const setDbErrorHandler = (fn) => { onDbError = fn; };
+// Se una scrittura fallisce, lo schermo mostra qualcosa che nel database non
+// c'è: chi ascolta qui ricarica i dati veri, così l'app non "mente".
+let onDbFail = null;
+const setDbFailHandler = (fn) => { onDbFail = fn; };
 
 const run = async (etichetta, promessa) => {
   try {
@@ -264,49 +268,88 @@ const run = async (etichetta, promessa) => {
     if (error) {
       console.error("[WFY] errore " + etichetta + ":", error);
       if (onDbError) onDbError(etichetta + ": " + (error.message || "errore sconosciuto"));
+      if (onDbFail) onDbFail();
       return false;
     }
     return true;
   } catch (e) {
     console.error("[WFY] eccezione " + etichetta + ":", e);
     if (onDbError) onDbError(etichetta + ": " + (e.message || "errore di rete"));
+    if (onDbFail) onDbFail();
     return false;
   }
 };
 
-// Il server Supabase restituisce al massimo 1000 righe per richiesta,
-// anche chiedendo di più. Quindi carichiamo a blocchi finché non finiscono.
+// Inserimento di molte righe in una sola richiesta (a blocchi di 500).
+// Se il blocco viene rifiutato si riprova una riga alla volta, così un solo
+// doppione non fa perdere tutte le altre.
+const inserisciInBlocco = async (tabella, righe, etichetta) => {
+  for (let i = 0; i < righe.length; i += 500) {
+    const pezzo = righe.slice(i, i + 500);
+    let errore = null;
+    try { ({ error: errore } = await supabase.from(tabella).insert(pezzo)); }
+    catch (e) { errore = e; }
+    if (errore) {
+      console.warn("[WFY] blocco " + tabella + " rifiutato, riprovo riga per riga:", errore);
+      for (const riga of pezzo) await run(etichetta, supabase.from(tabella).insert(riga));
+    }
+  }
+};
+
+// Il server Supabase restituisce al massimo 1000 righe per richiesta, quindi
+// si carica a pagine. Tre accorgimenti:
+//  - ordine fisso per id: senza, il database può restituire le pagine in ordine
+//    diverso a ogni richiesta e una riga può finire due volte o saltare;
+//  - la prima pagina chiede anche il totale, così le altre partono insieme
+//    invece che una dopo l'altra;
+//  - se una pagina fallisce si restituisce null (e chi chiama tiene i dati che
+//    aveva) invece di un elenco monco che farebbe "sparire" appuntamenti.
 const caricaTutto = async (tabella) => {
   const BLOCCO = 1000;
-  let tutte = [], da = 0;
-  for (let giro = 0; giro < 60; giro++) { // limite di sicurezza: 60.000 righe
-    const { data, error } = await supabase.from(tabella).select("*").range(da, da + BLOCCO - 1);
-    if (error) {
-      console.error("[WFY] errore lettura " + tabella + ":", error);
-      if (onDbError) onDbError("lettura " + tabella + ": " + error.message);
-      break;
+  const errore = (e) => {
+    console.error("[WFY] errore lettura " + tabella + ":", e);
+    return null; // l'avviso a schermo lo dà loadAll, una volta sola
+  };
+  try {
+    const prima = await supabase.from(tabella).select("*", { count: "exact" }).order("id").range(0, BLOCCO - 1);
+    if (prima.error) return errore(prima.error);
+    let tutte = prima.data || [];
+    const totale = typeof prima.count === "number" ? prima.count : tutte.length;
+    if (tutte.length === BLOCCO && totale > BLOCCO) {
+      const richieste = [];
+      for (let da = BLOCCO; da < totale && da < 60000; da += BLOCCO) {
+        richieste.push(supabase.from(tabella).select("*").order("id").range(da, da + BLOCCO - 1));
+      }
+      const pagine = await Promise.all(richieste);
+      for (const pg of pagine) {
+        if (pg.error) return errore(pg.error);
+        tutte = tutte.concat(pg.data || []);
+      }
     }
-    if (!data || data.length === 0) break;
-    tutte = tutte.concat(data);
-    if (data.length < BLOCCO) break; // ultimo blocco
-    da += BLOCCO;
+    // una riga inserita mentre si caricava può comparire in due pagine
+    const visti = new Set();
+    return tutte.filter((r) => r && !visti.has(r.id) && visti.add(r.id));
+  } catch (e) {
+    return errore(e);
   }
-  return tutte;
 };
 
 const db = {
+  // Ogni voce è l'elenco letto, oppure null se quella lettura è fallita.
+  // (Le schede di allenamento non si caricano più: la sezione è stata tolta.)
   async loadAll() {
-    const [c, s, b, sc] = await Promise.all([
+    const [c, s, b] = await Promise.all([
       caricaTutto("clienti"),
       caricaTutto("slots"),
       caricaTutto("bookings"),
-      caricaTutto("schede"),
     ]);
+    if ((!c || !s || !b) && onDbError) {
+      onDbError("Lettura dal database non riuscita: i dati a schermo potrebbero non essere aggiornati");
+    }
     return {
-      clienti: c.map(rowToCliente),
-      slots: s.map(rowToSlot),
-      bookings: b.map(rowToBooking),
-      schede: sc.map(rowToScheda),
+      clienti: c ? c.map(rowToCliente) : null,
+      slots: s ? s.map(rowToSlot) : null,
+      bookings: b ? b.map(rowToBooking) : null,
     };
   },
 
@@ -325,6 +368,9 @@ const db = {
   insertSlot: (s) => run("salva sessione", supabase.from("slots").insert({ id: s.id, day: s.day, time: s.time, durata: s.durata, posti: s.posti, tipo: s.tipo })),
   updateSlot: (id, p) => run("aggiorna sessione", supabase.from("slots").update(p).eq("id", id)),
   deleteSlot: (id) => run("elimina sessione", supabase.from("slots").delete().eq("id", id)),
+  insertSlots: (lista) => inserisciInBlocco("slots",
+    lista.map((s) => ({ id: s.id, day: s.day, time: s.time, durata: s.durata, posti: s.posti, tipo: s.tipo })),
+    "salva sessione"),
 
   // bookings
   insertBooking: (b) => run("salva prenotazione", supabase.from("bookings").insert({ id: b.id, slot_id: b.slotId, cliente_id: (b.clienteId && !String(b.clienteId).startsWith("guest_")) ? b.clienteId : null, cliente_name: b.clienteName, nota: b.nota, stato: b.stato })),
@@ -336,6 +382,18 @@ const db = {
     return run("aggiorna prenotazione", supabase.from("bookings").update(patch).eq("id", id));
   },
   deleteBooking: (id) => run("elimina prenotazione", supabase.from("bookings").delete().eq("id", id)),
+  insertBookings: (lista) => inserisciInBlocco("bookings",
+    lista.map((b) => ({ id: b.id, slot_id: b.slotId, cliente_id: b.clienteId || null, cliente_name: b.clienteName, nota: b.nota, stato: b.stato })),
+    "salva prenotazione"),
+  // elimina più prenotazioni con una sola richiesta (a blocchi di 200 id)
+  deleteBookings: async (ids) => {
+    let ok = true;
+    for (let i = 0; i < ids.length; i += 200) {
+      const esito = await run("elimina prenotazioni", supabase.from("bookings").delete().in("id", ids.slice(i, i + 200)));
+      ok = ok && esito;
+    }
+    return ok;
+  },
 
   // schede
   insertScheda: (sc) => run("salva scheda", supabase.from("schede").insert({ id: sc.id, cliente_id: sc.clienteId, nome: sc.nome, note: sc.note, esercizi: sc.esercizi })),
@@ -350,16 +408,43 @@ const db = {
   },
   deleteScheda: (id) => run("elimina scheda", supabase.from("schede").delete().eq("id", id)),
 
-  // realtime: richiama onChange a ogni modifica su qualunque tabella
-  subscribe(onChange) {
+  // realtime: onChange riceve la singola modifica (tabella, tipo, riga);
+  // onStato riceve lo stato del canale (serve a capire quando si riconnette)
+  subscribe(onChange, onStato) {
     const ch = supabase.channel("wfy-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "clienti" }, onChange)
       .on("postgres_changes", { event: "*", schema: "public", table: "slots" }, onChange)
       .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, onChange)
-      .on("postgres_changes", { event: "*", schema: "public", table: "schede" }, onChange)
-      .subscribe();
+      .subscribe((stato) => { if (onStato) onStato(stato); });
     return () => supabase.removeChannel(ch);
   },
+};
+
+// Applica UNA modifica arrivata dal database allo stato dell'app, senza
+// ricaricare nulla. Ripeterla è innocuo: inserire due volte la stessa riga o
+// togliere una riga già tolta non cambia il risultato.
+const TABELLE_VIVE = {
+  clienti: ["clienti", rowToCliente],
+  slots: ["slots", rowToSlot],
+  bookings: ["bookings", rowToBooking],
+};
+const applicaModifica = (prev, ev) => {
+  const def = ev && TABELLE_VIVE[ev.table];
+  if (!def) return prev;
+  const [chiave, converti] = def;
+  const lista = prev[chiave] || [];
+  if (ev.eventType === "DELETE") {
+    const id = ev.old && ev.old.id;
+    if (!id || !lista.some((x) => x.id === id)) return prev;
+    return { ...prev, [chiave]: lista.filter((x) => x.id !== id) };
+  }
+  if (!ev.new || !ev.new.id) return prev;
+  const riga = converti(ev.new);
+  const i = lista.findIndex((x) => x.id === riga.id);
+  if (i === -1) return { ...prev, [chiave]: [...lista, riga] };
+  const copia = lista.slice();
+  copia[i] = riga;
+  return { ...prev, [chiave]: copia };
 };
 
 
@@ -370,59 +455,107 @@ const db = {
 function useStore() {
   const [state, setState] = useState({ clienti: [], slots: [], bookings: [], schede: [] });
   const [loading, setLoading] = useState(true);
-  // finestra di protezione: dopo una scrittura locale, ignora i reload
-  // realtime per un attimo, così non sovrascrivono ciò che abbiamo appena fatto
+  // dopo una scrittura locale si aspetta qualche secondo prima di un
+  // ricaricamento completo, così non si legge il database "a metà"
   const writingUntil = useRef(0);
   const markWrite = () => { writingUntil.current = Date.now() + 4000; };
-  // riferimento sempre aggiornato allo stato (serve alla ricorrenza)
+  // riferimento sempre aggiornato allo stato (serve ai controlli e alla ricorrenza)
   const stateRef = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
 
+  // Righe create qui il cui salvataggio non è ancora terminato. Un
+  // ricaricamento completo le conserva (il database non le ha ancora); appena
+  // il salvataggio finisce, bene o male, escono dall'elenco: se è fallito, al
+  // ricaricamento successivo spariscono dallo schermo invece di restare finte.
+  const inVolo = useRef(new Set());
+  const segui = (ids, promessa) => {
+    ids.forEach((id) => inVolo.current.add(id));
+    return Promise.resolve(promessa).finally(() => ids.forEach((id) => inVolo.current.delete(id)));
+  };
+
+  // ── ricaricamento completo ──
+  // Serve solo all'avvio e come rete di sicurezza (rientro dopo una pausa,
+  // riconnessione, scrittura fallita). Nel funzionamento normale le modifiche
+  // arrivano una per una da applicaModifica, senza scaricare nulla.
+  const inCarico = useRef(false);     // c'è un ricaricamento in corso
+  const daRifare = useRef(false);     // ne è stato chiesto un altro nel frattempo
+  const arrivate = useRef([]);        // modifiche arrivate durante il ricaricamento
+  const timerRicarica = useRef(null);
+
   const reload = useCallback(async () => {
-    const data = await db.loadAll();
-    console.log("[WFY] caricati:", data.clienti.length, "clienti ·", data.slots.length, "slot ·", data.bookings.length, "prenotazioni");
-    setState(data);
-    setLoading(false);
+    if (inCarico.current) { daRifare.current = true; return; }
+    inCarico.current = true;
+    arrivate.current = [];
+    try {
+      const data = await db.loadAll();
+      if (data.clienti && data.slots && data.bookings) {
+        console.log("[WFY] caricati:", data.clienti.length, "clienti ·", data.slots.length, "slot ·", data.bookings.length, "prenotazioni");
+      }
+      setState((prev) => {
+        // non perdere ciò che è stato creato qui e che il database non ha
+        // ancora finito di registrare
+        const fondi = (dbList, localList) => {
+          if (!dbList) return localList || []; // lettura fallita: tengo quello che avevo
+          const ids = new Set(dbList.map((x) => x.id));
+          return [...dbList, ...(localList || []).filter((x) => !ids.has(x.id) && inVolo.current.has(x.id))];
+        };
+        let nuovo = {
+          clienti: fondi(data.clienti, prev.clienti),
+          slots: fondi(data.slots, prev.slots),
+          bookings: fondi(data.bookings, prev.bookings),
+          schede: [],
+        };
+        // le modifiche arrivate mentre si scaricava potrebbero non essere nella
+        // lettura appena fatta: le riapplico sopra
+        for (const ev of arrivate.current) nuovo = applicaModifica(nuovo, ev);
+        return nuovo;
+      });
+    } finally {
+      inCarico.current = false;
+      setLoading(false);
+      if (daRifare.current) { daRifare.current = false; reload(); }
+    }
   }, []);
 
-  const reloadSafe = useCallback(async () => {
-    if (Date.now() < writingUntil.current) return; // scrittura in corso: non sovrascrivere
-    const data = await db.loadAll();
-    // salvaguardia: non perdere elementi creati localmente da pochi secondi
-    // che potrebbero non essere ancora stati propagati dal database.
-    setState((prev) => {
-      const recente = (x) => x.createdAt && (Date.now() - new Date(x.createdAt).getTime() < 15000);
-      const fondi = (dbList, localList) => {
-        const ids = new Set(dbList.map((x) => x.id));
-        const mancanti = localList.filter((x) => !ids.has(x.id) && recente(x));
-        return [...dbList, ...mancanti];
-      };
-      return {
-        clienti: fondi(data.clienti, prev.clienti || []),
-        slots: fondi(data.slots, prev.slots || []),
-        bookings: fondi(data.bookings, prev.bookings || []),
-        schede: fondi(data.schede, prev.schede || []),
-      };
-    });
-  }, []);
+  // chiede un ricaricamento completo: più richieste ravvicinate ne fanno uno solo
+  const chiediRicarica = useCallback(() => {
+    clearTimeout(timerRicarica.current);
+    const attesa = Math.max(400, writingUntil.current - Date.now() + 300);
+    timerRicarica.current = setTimeout(() => { reload(); }, attesa);
+  }, [reload]);
 
   useEffect(() => {
+    let iscrizioni = 0;
+    const unsub = db.subscribe(
+      (ev) => {
+        if (inCarico.current) arrivate.current.push(ev);
+        setState((prev) => applicaModifica(prev, ev));
+      },
+      (stato) => {
+        // la prima iscrizione coincide con l'avvio; dalle successive in poi
+        // vuol dire che la connessione era caduta e qualcosa può essere sfuggito
+        if (stato === "SUBSCRIBED") { iscrizioni++; if (iscrizioni > 1) chiediRicarica(); }
+      }
+    );
     reload();
-    const unsub = db.subscribe(() => { reloadSafe(); });
-    // aggiorna quando la app torna in primo piano (utile su telefono)
-    // quando l'app torna in primo piano ricarico i dati.
-    // Se è rimasta in secondo piano a lungo (tipico sui telefoni, che
-    // "congelano" la pagina), forzo un ricaricamento completo.
+    setDbFailHandler(chiediRicarica);
+
+    // rientro in primo piano: i telefoni "congelano" la pagina in sottofondo,
+    // quindi dopo una pausa non breve si riallinea tutto
     let uscitaAlle = 0;
-    const onFocus = () => {
-      const fermaDaMolto = uscitaAlle && (Date.now() - uscitaAlle > 30000);
+    const onVisibilita = () => {
       if (document.visibilityState === "hidden") { uscitaAlle = Date.now(); return; }
-      if (fermaDaMolto) { uscitaAlle = 0; reload(); } else { reloadSafe(); }
+      if (uscitaAlle && Date.now() - uscitaAlle > 15000) chiediRicarica();
+      uscitaAlle = 0;
     };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onFocus);
-    return () => { unsub(); window.removeEventListener("focus", onFocus); document.removeEventListener("visibilitychange", onFocus); };
-  }, [reload, reloadSafe]);
+    document.addEventListener("visibilitychange", onVisibilita);
+    return () => {
+      unsub();
+      setDbFailHandler(null);
+      clearTimeout(timerRicarica.current);
+      document.removeEventListener("visibilitychange", onVisibilita);
+    };
+  }, [reload, chiediRicarica]);
 
   const api = useMemo(() => ({
     state,
@@ -433,7 +566,7 @@ function useStore() {
       const c = makeCliente(data);
       markWrite();
       setState((s) => ({ ...s, clienti: [...s.clienti, c] }));
-      db.insertCliente(c);
+      segui([c.id], db.insertCliente(c));
       return c.id;
     },
     createClienteQuick: (fullName) => {
@@ -446,14 +579,14 @@ function useStore() {
       // la promessa si risolve SOLO quando il cliente è davvero nel database
       // (prova completa, e se fallisce, fallback minimale) — così la
       // prenotazione non parte mai prima che il cliente esista.
-      const pronto = (async () => {
+      const pronto = segui([c.id], (async () => {
         let ok = await db.insertCliente(c);
         if (!ok) {
           console.error("[WFY] cliente rapido: insert completo fallito, riprovo minimale");
           ok = await db.insertClienteMinimo(c);
         }
         return ok; // true solo se una delle due scritture è riuscita
-      })();
+      })());
       return { id: c.id, pronto };
     },
     updateCliente: (id, patch) => {
@@ -498,7 +631,7 @@ function useStore() {
       if (esiste) return null; // già presente: non creo doppioni
       markWrite();
       setState((s) => ({ ...s, slots: [...s.slots, slot] }));
-      db.insertSlot(slot).then((ok) => {
+      segui([slot.id], db.insertSlot(slot)).then((ok) => {
         if (!ok) console.error("[WFY] sessione NON salvata:", slot);
       });
       return slot;
@@ -519,9 +652,33 @@ function useStore() {
       const nuoviSlot = [];
       const nuoveBooking = [];
 
-      // fotografia dello stato attuale su cui ragionare
-      const slotsOra = [...stateRef.current.slots];
-      const bookingsOra = [...stateRef.current.bookings];
+      // Indici costruiti una volta sola sulla fotografia dello stato attuale:
+      // prima ogni data riscorreva tutti gli appuntamenti e tutte le sessioni,
+      // e su un telefono una ricorrenza di sei mesi si faceva attendere.
+      const slotsOra = stateRef.current.slots || [];
+      const bookingsOra = stateRef.current.bookings || [];
+      const slotPerId = new Map();
+      const slotPerChiave = new Map();           // "giorno|orario" → sessione
+      for (const x of slotsOra) {
+        if (!x) continue;
+        slotPerId.set(x.id, x);
+        slotPerChiave.set(x.day + "|" + x.time, x);
+      }
+      const occupatiPerSlot = new Map();          // sessione → quanti iscritti
+      const slotDelCliente = new Set();           // sessioni in cui il cliente c'è già
+      const giorniDelCliente = new Map();         // giorno → sessioni del cliente quel giorno
+      for (const b of bookingsOra) {
+        if (!b) continue;
+        occupatiPerSlot.set(b.slotId, (occupatiPerSlot.get(b.slotId) || 0) + 1);
+        if (clienteId && b.clienteId === clienteId) {
+          slotDelCliente.add(b.slotId);
+          const sl = slotPerId.get(b.slotId);
+          if (sl && sl.day) {
+            if (!giorniDelCliente.has(sl.day)) giorniDelCliente.set(sl.day, new Set());
+            giorniDelCliente.get(sl.day).add(sl.id);
+          }
+        }
+      }
 
       let g = dal;
       let guardia = 0;
@@ -530,10 +687,11 @@ function useStore() {
         const dow = new Date(g + "T00:00:00").getDay(); // 0=dom ... 6=sab
         if (giorni.includes(dow)) {
           // esiste già uno slot in quel giorno a quell'ora?
-          let slot = slotsOra.find((x) => x.day === g && x.time === time);
+          let slot = slotPerChiave.get(g + "|" + time);
           if (!slot) {
             slot = makeSlot({ day: g, time, durata, posti, tipo });
-            slotsOra.push(slot);
+            slotPerId.set(slot.id, slot);
+            slotPerChiave.set(g + "|" + time, slot);
             nuoviSlot.push(slot);
             esito.create++;
           } else {
@@ -541,24 +699,24 @@ function useStore() {
           }
 
           if (clienteId) {
-            const occupati = bookingsOra.filter((b) => b.slotId === slot.id);
-            const gia = occupati.some((b) => b.clienteId === clienteId);
+            const occupati = occupatiPerSlot.get(slot.id) || 0;
+            const gia = slotDelCliente.has(slot.id);
             // già prenotato quel giorno in un ALTRO orario?
-            const altrove = bookingsOra.some((b) => {
-              if (b.clienteId !== clienteId || b.slotId === slot.id) return false;
-              const s = slotsOra.find((x) => x.id === b.slotId);
-              return s && s.day === g;
-            });
+            const quelGiorno = giorniDelCliente.get(g);
+            const altrove = !!quelGiorno && [...quelGiorno].some((id) => id !== slot.id);
             if (gia) {
               esito.giaIscritto++;
             } else if (altrove) {
               esito.altroOrario.push(g); // quel giorno ha già un appuntamento
-            } else if (occupati.length >= (slot.posti || MAX_POSTI)) {
+            } else if (occupati >= (slot.posti || MAX_POSTI)) {
               esito.pieneSaltate.push(g); // slot pieno: il cliente salta questo giorno
             } else {
               const bk = makeBooking({ slotId: slot.id, clienteId });
-              bookingsOra.push(bk);
               nuoveBooking.push(bk);
+              occupatiPerSlot.set(slot.id, occupati + 1);
+              slotDelCliente.add(slot.id);
+              if (!giorniDelCliente.has(g)) giorniDelCliente.set(g, new Set());
+              giorniDelCliente.get(g).add(slot.id);
               esito.iscritti++;
             }
           }
@@ -573,11 +731,13 @@ function useStore() {
           slots: [...s.slots, ...nuoviSlot],
           bookings: [...s.bookings, ...nuoveBooking],
         }));
-        (async () => {
-          for (const sl of nuoviSlot) await db.insertSlot(sl);
-          if (attendiCliente) await attendiCliente; // il cliente deve esistere prima
-          for (const bk of nuoveBooking) await db.insertBooking(bk);
-        })();
+        segui([...nuoviSlot, ...nuoveBooking].map((x) => x.id), (async () => {
+          // una richiesta per tutte le sessioni e una per tutte le iscrizioni,
+          // invece di una richiesta per ogni riga
+          if (nuoviSlot.length) await db.insertSlots(nuoviSlot);
+          if (attendiCliente) { try { await attendiCliente; } catch (e) { /* già segnalato */ } }
+          if (nuoveBooking.length) await db.insertBookings(nuoveBooking);
+        })());
       }
       return esito;
     },
@@ -604,21 +764,23 @@ function useStore() {
         const gia = bks.some((b) => b.slotId === data.slotId && b.clienteId === data.clienteId);
         if (gia) return { ok: false, motivo: "duplicato" };
         // già prenotato lo STESSO GIORNO in un altro orario
-        const dest = sls.find((s) => s && s.id === data.slotId);
+        const perId = new Map(sls.filter(Boolean).map((x) => [x.id, x]));
+        const dest = perId.get(data.slotId);
         if (dest && dest.day) {
           const altra = bks.find((b) => {
             if (b.clienteId !== data.clienteId) return false;
-            const s = sls.find((x) => x && x.id === b.slotId);
+            const s = perId.get(b.slotId);
             return s && s.day === dest.day;
           });
           if (altra) {
-            const s = sls.find((x) => x && x.id === altra.slotId);
+            const s = perId.get(altra.slotId);
             return { ok: false, motivo: "stessoGiorno", orario: s ? s.time : "" };
           }
         }
       }
       const b = makeBooking(data);
       markWrite();
+      inVolo.current.add(b.id);
       setState((s) => ({ ...s, bookings: [...s.bookings, b] }));
       let clienteOk = true;
       if (attendi) {
@@ -629,6 +791,7 @@ function useStore() {
       // senza id (col nome): resta comunque visibile
       if (!clienteOk && b.clienteName) b.clienteId = null;
       const esito = await db.insertBooking(b);
+      inVolo.current.delete(b.id);
       if (!esito) console.error("[WFY] prenotazione NON inviata:", b);
       return { ok: true, id: b.id };
     },
@@ -642,6 +805,34 @@ function useStore() {
       setState((s) => ({ ...s, bookings: s.bookings.filter((b) => b.id !== id) }));
       db.deleteBooking(id);
     },
+    // Appuntamenti che formano una "serie" con quello indicato: stesso cliente,
+    // stesso giorno della settimana, stesso orario, da quella data in avanti.
+    // (Le ricorrenze non hanno un'etichetta propria nel database: si
+    // riconoscono così, e questo vale anche per quelle create in passato.)
+    serieDa: (bookingId) => {
+      const bks = stateRef.current.bookings || [];
+      const perId = new Map((stateRef.current.slots || []).filter(Boolean).map((x) => [x.id, x]));
+      const bk = bks.find((b) => b.id === bookingId);
+      const sl = bk && perId.get(bk.slotId);
+      if (!bk || !bk.clienteId || !sl || !sl.day) return [];
+      const dow = new Date(sl.day + "T00:00:00").getDay();
+      return bks.filter((b) => {
+        if (b.clienteId !== bk.clienteId) return false;
+        const s = perId.get(b.slotId);
+        return !!s && s.time === sl.time && s.day >= sl.day
+          && new Date(s.day + "T00:00:00").getDay() === dow;
+      }).map((b) => ({ id: b.id, day: perId.get(b.slotId).day }))
+        .sort((x, y) => x.day.localeCompare(y.day));
+    },
+    // elimina in un colpo solo gli appuntamenti indicati (le sessioni restano)
+    removeBookings: (ids) => {
+      const via = new Set(ids);
+      if (via.size === 0) return 0;
+      markWrite();
+      setState((s) => ({ ...s, bookings: s.bookings.filter((b) => !via.has(b.id)) }));
+      db.deleteBookings([...via]);
+      return via.size;
+    },
     moveBooking: (bookingId, newSlotId) => {
       const bks = stateRef.current.bookings || [];
       const sls = stateRef.current.slots || [];
@@ -651,15 +842,16 @@ function useStore() {
         const gia = bks.some((b) => b.id !== bookingId && b.slotId === newSlotId && b.clienteId === bk.clienteId);
         if (gia) return { ok: false, motivo: "duplicato" };
         // già prenotato lo stesso giorno in un altro orario?
-        const dest = sls.find((s) => s && s.id === newSlotId);
+        const perId = new Map(sls.filter(Boolean).map((x) => [x.id, x]));
+        const dest = perId.get(newSlotId);
         if (dest && dest.day) {
           const altra = bks.find((b) => {
             if (b.id === bookingId || b.clienteId !== bk.clienteId) return false;
-            const s = sls.find((x) => x && x.id === b.slotId);
+            const s = perId.get(b.slotId);
             return s && s.day === dest.day;
           });
           if (altra) {
-            const s = sls.find((x) => x && x.id === altra.slotId);
+            const s = perId.get(altra.slotId);
             return { ok: false, motivo: "stessoGiorno", orario: s ? s.time : "" };
           }
         }
@@ -952,7 +1144,7 @@ function LoginPage({ onLogin }) {
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
         <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v34-coerente</div>
+        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v35-veloce</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -970,6 +1162,23 @@ function LoginPage({ onLogin }) {
 
 
 /* ═══════════════════════════ pages/ · Dashboard ═══════════════════════════ */
+// Puntino accanto al nome negli appuntamenti: rosso se il certificato medico è
+// scaduto, giallo se scade entro 30 giorni. Chi non ha ancora una data
+// inserita non viene segnato (si trova col filtro nella pagina Clienti).
+const certDaSegnalare = (cliente) => {
+  if (!cliente) return null;
+  const st = statoCertificato(cliente.certificato);
+  return st.stato === "scaduto" || st.stato === "inScadenza" ? st : null;
+};
+const SegnoCertificato = ({ cliente }) => {
+  const st = certDaSegnalare(cliente);
+  if (!st) return null;
+  return (
+    <span title={st.label} aria-label={st.label}
+      style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: st.colore, marginRight: 5, verticalAlign: "middle" }} />
+  );
+};
+
 function DashboardPage({ store, staff, goToCalendar }) {
   const { state } = store;
   const t = todayStr();
@@ -1051,6 +1260,7 @@ function DashboardPage({ store, staff, goToCalendar }) {
                       ? <span style={{ fontFamily: FSANS, fontSize: 13, color: C.inkFaint }}>Nessuna prenotazione</span>
                       : occ.map((b) => (
                         <span key={b.id} style={{ fontFamily: FSANS, fontSize: 12, background: C.bg, color: C.ink, borderRadius: 6, padding: "2px 8px" }}>
+                          <SegnoCertificato cliente={state.clienti.find((x) => x.id === b.clienteId)} />
                           {nomeConIniziale(nomeCliente(b))}
                         </span>
                       ))}
@@ -1083,9 +1293,22 @@ function CalendarPage({ store, toast }) {
   const days = view === "day" ? [anchor] : weekDays(anchor);
 
   const slotsOf = (day) => state.slots.filter((s) => s.day === day).sort((a, b) => cmpTime(a.time, b.time));
-  const occOf = (slotId) => state.bookings.filter((b) => b.slotId === slotId);
+  // indici ricalcolati solo quando i dati cambiano: prima ogni sessione a
+  // schermo riscorreva l'intero elenco degli appuntamenti
+  const prenotazioniPerSlot = useMemo(() => {
+    const m = new Map();
+    for (const b of state.bookings) {
+      if (!b) continue;
+      if (!m.has(b.slotId)) m.set(b.slotId, []);
+      m.get(b.slotId).push(b);
+    }
+    return m;
+  }, [state.bookings]);
+  const clientePerId = useMemo(() => new Map(state.clienti.map((c) => [c.id, c])), [state.clienti]);
+  const VUOTO = useMemo(() => [], []);
+  const occOf = (slotId) => prenotazioniPerSlot.get(slotId) || VUOTO;
   const nomeCliente = (b) =>
-    b.clienteName || (() => { const c = state.clienti.find((x) => x.id === b.clienteId); return c ? `${c.nome} ${c.cognome}` : "Ospite"; })();
+    b.clienteName || (() => { const c = clientePerId.get(b.clienteId); return c ? `${c.nome} ${c.cognome}` : "Ospite"; })();
 
   const shift = (n) => setAnchor((a) => addDays(a, view === "day" ? n : n * 7));
 
@@ -1162,12 +1385,17 @@ function CalendarPage({ store, toast }) {
                       {/* clienti prenotati (tap → modifica/sposta/elimina) */}
                       {occ.length > 0 && (
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
-                          {occ.map((b) => (
-                            <button key={b.id} onClick={() => setEditBooking({ booking: b, slot: s })}
-                              style={{ fontFamily: FSANS, fontSize: 12, background: C.bg, color: C.ink, border: `1px solid ${C.border}`, borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>
-                              {nomeConIniziale(nomeCliente(b))}
-                            </button>
-                          ))}
+                          {occ.map((b) => {
+                            const cli = clientePerId.get(b.clienteId);
+                            const cert = certDaSegnalare(cli);
+                            return (
+                              <button key={b.id} onClick={() => setEditBooking({ booking: b, slot: s })}
+                                style={{ fontFamily: FSANS, fontSize: 12, background: C.bg, color: C.ink, border: `1px solid ${cert ? cert.colore : C.border}`, borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>
+                                <SegnoCertificato cliente={cli} />
+                                {nomeConIniziale(nomeCliente(b))}
+                              </button>
+                            );
+                          })}
                         </div>
                       )}
                       {!pieno && (
@@ -1263,6 +1491,13 @@ function CalendarPage({ store, toast }) {
       {/* ── Modal: modifica/sposta/elimina prenotazione ── */}
       <EditBookingModal open={!!editBooking} data={editBooking}
         slots={state.slots}
+        cliente={editBooking ? clientePerId.get(editBooking.booking.clienteId) : null}
+        serie={editBooking ? store.serieDa(editBooking.booking.id) : []}
+        onDeleteSerie={(ids) => {
+          const n = store.removeBookings(ids);
+          setEditBooking(null);
+          toast(`${n} appuntamenti eliminati`);
+        }}
         onClose={() => setEditBooking(null)}
         onSave={(patch) => { store.updateBooking(editBooking.booking.id, patch); setEditBooking(null); toast("Prenotazione aggiornata"); }}
         onMove={(newSlotId) => {
@@ -1478,12 +1713,15 @@ function BookingModal({ open, slot, clienti, onClose, onConfirm }) {
   );
 }
 
-function EditBookingModal({ open, data, slots, onClose, onSave, onMove, onDelete }) {
+function EditBookingModal({ open, data, slots, cliente, serie = [], onClose, onSave, onMove, onDelete, onDeleteSerie }) {
   const [nota, setNota] = useState("");
   const [moveTo, setMoveTo] = useState("");
-  useEffect(() => { if (open && data) { setNota(data.booking.nota || ""); setMoveTo(""); } }, [open, data]);
+  const [confermaSerie, setConfermaSerie] = useState(false);
+  useEffect(() => { if (open && data) { setNota(data.booking.nota || ""); setMoveTo(""); setConfermaSerie(false); } }, [open, data]);
   if (!data) return null;
   const { booking, slot } = data;
+  const cert = certDaSegnalare(cliente);
+  const ultimaSerie = serie.length ? serie[serie.length - 1].day : null;
   // sessioni vicine a quella attuale: da una settimana prima a tre settimane
   // dopo. Prima la lista partiva dalla prima sessione mai creata (inizio
   // agosto), rendendo lo spostamento inutilizzabile.
@@ -1495,7 +1733,17 @@ function EditBookingModal({ open, data, slots, onClose, onSave, onMove, onDelete
   return (
     <Modal open={open} onClose={onClose}>
       <div style={{ fontFamily: FSERIF, fontSize: 20, fontWeight: 800, color: C.ink, marginBottom: 4 }}>Prenotazione</div>
-      <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid, marginBottom: 18, textTransform: "capitalize" }}>{fmtLong(slot.day)} · {slot.time}</div>
+      <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid, marginBottom: 18 }}>
+        {cliente && <strong style={{ color: C.ink }}>{cliente.nome} {cliente.cognome} · </strong>}
+        <span style={{ textTransform: "capitalize" }}>{fmtLong(slot.day)}</span> · {slot.time}
+      </div>
+
+      {cert && (
+        <div style={{ background: cert.bg, border: `1.5px solid ${cert.colore}`, borderRadius: 10, padding: "10px 13px", marginBottom: 14,
+          fontFamily: FSANS, fontSize: 13, fontWeight: 700, color: cert.colore }}>
+          ⚠️ Certificato medico: {cert.label.charAt(0).toLowerCase() + cert.label.slice(1)}
+        </div>
+      )}
 
       <Input label="Nota" value={nota} onChange={(e) => setNota(e.target.value)} placeholder="—" />
 
@@ -1515,11 +1763,38 @@ function EditBookingModal({ open, data, slots, onClose, onSave, onMove, onDelete
         )}
       </div>
 
+      {/* serie ricorrente: stesso cliente, stesso giorno della settimana e orario */}
+      {serie.length > 1 && onDeleteSerie && (
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
+          <div style={{ fontFamily: FSANS, fontSize: 12.5, color: C.inkMid, lineHeight: 1.5 }}>
+            Da questa data ci sono <strong style={{ color: C.ink }}>{serie.length} appuntamenti</strong> ogni{" "}
+            <span style={{ textTransform: "capitalize" }}>{fmtWeekdayShort(slot.day)}</span> alle {slot.time}, l'ultimo il {fmtShort(ultimaSerie)}.
+          </div>
+          {!confermaSerie ? (
+            <button onClick={() => setConfermaSerie(true)}
+              style={{ marginTop: 10, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 9, padding: "9px 12px", cursor: "pointer",
+                fontFamily: FSANS, fontSize: 12.5, fontWeight: 700, color: C.red }}>
+              Elimina questo e i successivi ({serie.length})
+            </button>
+          ) : (
+            <div style={{ marginTop: 10, background: C.redSoft, border: `1.5px solid ${C.red}`, borderRadius: 10, padding: 12 }}>
+              <div style={{ fontFamily: FSANS, fontSize: 13, fontWeight: 700, color: C.red, marginBottom: 10 }}>
+                Eliminare {serie.length} appuntamenti dal {fmtShort(slot.day)} al {fmtShort(ultimaSerie)}? Non si può annullare.
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Btn variant="danger" style={{ background: C.red, color: "#fff" }} onClick={() => onDeleteSerie(serie.map((x) => x.id))}>Sì, elimina {serie.length}</Btn>
+                <Btn variant="secondary" onClick={() => setConfermaSerie(false)}>No, torna indietro</Btn>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="wfy-act" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         {moveTo
           ? <Btn onClick={() => onMove(moveTo)} style={{ flex: 1 }}>Sposta qui</Btn>
           : <Btn onClick={() => onSave({ nota })} style={{ flex: 1 }}>Salva</Btn>}
-        <Btn variant="danger" onClick={onDelete}>Elimina</Btn>
+        <Btn variant="danger" onClick={onDelete}>{serie.length > 1 ? "Elimina solo questo" : "Elimina"}</Btn>
       </div>
     </Modal>
   );
@@ -1858,6 +2133,7 @@ function StatistichePage({ store }) {
     const presenzePerFascia = new Map(); // mattina/pranzo/pomeriggio/sera
     let totSedute = 0, nSessioni = 0;
     const giornateAperte = new Set(); // giornate con almeno una sessione svolta
+    const incrocio = new Map();       // "giornoSettimana|orario" → presenze e sessioni
 
     // occupazione: conta per slot (una volta sola per sessione)
     const occupatiPerSlot = new Map();
@@ -1895,6 +2171,15 @@ function StatistichePage({ store }) {
       if (dow !== null && perGiorno[dow]) {
         perGiorno[dow].occupati += occ;
         perGiorno[dow].giornate.add(s.day); // giornata aperta, anche se vuota
+      }
+
+      // incrocio giorno della settimana × orario
+      const ora = String(s.time || "").slice(0, 5);
+      if (dow !== null && ora) {
+        const k = dow + "|" + ora;
+        const c = incrocio.get(k) || { presenze: 0, sessioni: 0 };
+        c.presenze += occ; c.sessioni++;
+        incrocio.set(k, c);
       }
     }
 
@@ -1934,8 +2219,26 @@ function StatistichePage({ store }) {
     // presenze raggruppate per fascia della giornata
     const fasceGiorno = FASCE_GIORNO.map((f) => ({ ...f, n: presenzePerFascia.get(f.id) || 0 }));
 
+    // griglia giorno × orario: solo i giorni e gli orari in cui c'è stata
+    // almeno una sessione; ogni casella è la media di presenze per sessione
+    const ordineGiorni = [1, 2, 3, 4, 5, 6, 0];
+    const giorniGriglia = ordineGiorni.filter((dw) => [...incrocio.keys()].some((k) => k.startsWith(dw + "|")));
+    const orariGriglia = [...new Set([...incrocio.keys()].map((k) => k.split("|")[1]))].sort();
+    let maxCasella = 0;
+    const griglia = orariGriglia.map((ora) => ({
+      ora,
+      celle: giorniGriglia.map((dw) => {
+        const c = incrocio.get(dw + "|" + ora);
+        if (!c || c.sessioni === 0) return null;
+        const media = c.presenze / c.sessioni;
+        if (media > maxCasella) maxCasella = media;
+        return { media, presenze: c.presenze, sessioni: c.sessioni };
+      }),
+    }));
+
     return {
       mesi, giorni, classifica, orari, orariTop, fasceGiorno, categorie, senzaCategoria,
+      griglia, giorniGriglia: giorniGriglia.map((dw) => GG[dw]), maxCasella,
       totSedute, nSessioni,
       giornate: giornateAperte.size,
       mediaSeduta: nSessioni > 0 ? totSedute / nSessioni : 0,
@@ -2087,6 +2390,46 @@ function StatistichePage({ store }) {
       </div>
       <Card style={{ marginBottom: 24 }}>
         {dati.totSedute === 0 ? <Empty icon="📅" text="Nessuna sessione nel periodo." /> : dati.giorni.map(barraMedia)}
+      </Card>
+
+      {/* ── griglia giorno × orario ── */}
+      <SectionTitle>Giorno per orario</SectionTitle>
+      <div style={{ fontFamily: FSANS, fontSize: 11.5, color: C.inkFaint, marginBottom: 8 }}>
+        Media di presenze per sessione, e sotto su quante sessioni è calcolata · più scuro = più frequentato
+      </div>
+      <Card style={{ marginBottom: 24, padding: 12 }}>
+        {dati.griglia.length === 0 ? <Empty icon="🗓️" text="Nessuna sessione nel periodo." /> : (
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+            <table style={{ borderCollapse: "separate", borderSpacing: 3, width: "100%", fontFamily: FSANS }}>
+              <thead>
+                <tr>
+                  <th style={{ width: 46 }} />
+                  {dati.giorniGriglia.map((g) => (
+                    <th key={g} style={{ fontSize: 11, fontWeight: 700, color: C.inkMid, padding: "2px 0 4px", minWidth: 40 }}>{g}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {dati.griglia.map((r) => (
+                  <tr key={r.ora}>
+                    <th scope="row" style={{ fontSize: 11.5, fontWeight: 700, color: C.ink, textAlign: "left", paddingRight: 4, whiteSpace: "nowrap" }}>{r.ora}</th>
+                    {r.celle.map((c, i) => {
+                      if (!c) return <td key={i} style={{ background: C.bg, borderRadius: 6, textAlign: "center", color: C.inkFaint, fontSize: 11, padding: "6px 2px" }}>–</td>;
+                      const forza = dati.maxCasella > 0 ? c.media / dati.maxCasella : 0;
+                      return (
+                        <td key={i} title={`${c.presenze} presenze in ${c.sessioni} sessioni`}
+                          style={{ background: `rgba(232, 200, 0, ${0.12 + forza * 0.78})`, borderRadius: 6, textAlign: "center", padding: "5px 2px" }}>
+                          <div style={{ fontFamily: FSERIF, fontSize: 14, fontWeight: 800, color: C.ink, lineHeight: 1.15 }}>{unDecimale(c.media)}</div>
+                          <div style={{ fontSize: 9.5, color: C.inkMid, lineHeight: 1.2 }}>{c.sessioni} sess.</div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       {/* ── classifica degli orari più frequentati ── */}
