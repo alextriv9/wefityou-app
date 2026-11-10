@@ -926,6 +926,28 @@ const C = {
 const FSERIF = "Space Grotesk, sans-serif";
 const FSANS = "Inter, sans-serif";
 
+// Logo del centro (immagine piccola incorporata, così non serve un file a parte)
+const LOGO_SRC = "data:image/jpeg;base64,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";
+const Logo = ({ size = 40 }) => (
+  <img src={LOGO_SRC} alt="We Fit You" width={size} height={size}
+    style={{ width: size, height: size, borderRadius: "50%", display: "block", flexShrink: 0 }} />
+);
+
+// Icone a linea, tutte dello stesso stile (prima erano emoji, che cambiano
+// aspetto da un telefono all'altro)
+const ICONE = {
+  home: <><path d="M3 10.6 12 3l9 7.6V20a1 1 0 0 1-1 1h-5v-6.5H9V21H4a1 1 0 0 1-1-1z" /></>,
+  calendario: <><rect x="3" y="5" width="18" height="16" rx="2.5" /><path d="M3 10h18M8 3v4M16 3v4" /></>,
+  clienti: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c0-3.5 2.9-6 6.5-6s6.5 2.5 6.5 6" /><path d="M16 5.2a3 3 0 0 1 0 5.6M18 14.4c2.2.6 3.5 2.6 3.5 5.6" /></>,
+  statistiche: <><path d="M3 21h18" /><path d="M6 21v-8M12 21V5M18 21v-11" /></>,
+};
+const Icona = ({ nome, size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: "block", flexShrink: 0 }}>
+    {ICONE[nome]}
+  </svg>
+);
+
 // Inietta i font Google una sola volta.
 function useFonts() {
   useEffect(() => {
@@ -973,6 +995,21 @@ function useFonts() {
         @media (max-width:480px){
           .wfy-form{grid-template-columns:1fr !important}
         }
+
+        /* ── Titoli: più contenuti sul telefono ── */
+        .wfy-h2{font-size:24px;letter-spacing:-.4px}
+        .wfy-h3{font-size:16px;letter-spacing:-.2px}
+        @media (max-width:760px){ .wfy-h2{font-size:21px} .wfy-h3{font-size:15px} }
+        /* ── Tocchi: niente lampo grigio su iPhone, bordo visibile da tastiera ── */
+        button{-webkit-tap-highlight-color:transparent}
+        button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{
+          outline:2px solid ${C.ink};outline-offset:2px}
+        .wfy-chip-add:hover{border-color:${C.ink};color:${C.ink}}
+        /* fila di filtri che scorre di lato invece di andare su tre righe */
+        .wfy-filtri{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;margin:0 -2px;
+          scrollbar-width:none;-webkit-overflow-scrolling:touch}
+        .wfy-filtri::-webkit-scrollbar{display:none}
+        .wfy-filtri > *{flex-shrink:0}
       `;
       document.head.appendChild(st);
     }
@@ -983,7 +1020,7 @@ const Pill = ({ active, children, ...p }) => (
   <button {...p} style={{
     background: active ? C.ink : C.white, color: active ? C.yellow : C.inkMid,
     border: `1.5px solid ${active ? C.ink : C.border}`, borderRadius: 999,
-    padding: "8px 16px", cursor: "pointer", fontFamily: FSANS, fontWeight: 700, fontSize: 13,
+    padding: "7px 13px", cursor: "pointer", fontFamily: FSANS, fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap",
   }}>{children}</button>
 );
 
@@ -1010,7 +1047,7 @@ const Btn = ({ variant = "primary", children, style: s, ...p }) => {
 };
 
 const Card = ({ children, style: s, ...p }) => (
-  <div {...p} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, ...s }}>{children}</div>
+  <div {...p} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 18, boxShadow: "0 1px 2px rgba(17,17,17,.04)", ...s }}>{children}</div>
 );
 
 const Input = ({ label, ...p }) => (
@@ -1027,9 +1064,12 @@ const Select = ({ label, children, ...p }) => (
   </label>
 );
 
-const SectionTitle = ({ children, right }) => (
-  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 20, gap: 12, flexWrap: "wrap" }}>
-    <h2 style={{ fontFamily: FSERIF, fontSize: 26, fontWeight: 800, color: C.ink, margin: 0, letterSpacing: -.5, textTransform: "uppercase" }}>{children}</h2>
+// Titolo di pagina; con "sub" diventa il titolo più piccolo di una sezione interna
+const SectionTitle = ({ children, right, sub }) => (
+  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: sub ? 10 : 16, gap: 12, flexWrap: "wrap" }}>
+    {sub
+      ? <h3 className="wfy-h3" style={{ fontFamily: FSERIF, fontWeight: 700, color: C.ink, margin: 0 }}>{children}</h3>
+      : <h2 className="wfy-h2" style={{ fontFamily: FSERIF, fontWeight: 800, color: C.ink, margin: 0 }}>{children}</h2>}
     {right}
   </div>
 );
@@ -1142,9 +1182,14 @@ function LoginPage({ onLogin }) {
   const submit = () => (pin === ADMIN_PIN ? onLogin(staff) : setErr(true));
   return (
     <div style={{ minHeight: "100vh", background: C.dark, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div style={{ background: C.white, borderRadius: 20, padding: 40, width: 340, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
-        <div style={{ fontFamily: FSERIF, fontSize: 34, fontWeight: 800, color: C.yellow, letterSpacing: -1, lineHeight: 1.05, marginBottom: 6 }}>We Fit You</div>
-        <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginBottom: 24 }}>Accesso staff · v35-veloce</div>
+      <div style={{ background: C.white, borderRadius: 20, padding: 30, width: 350, maxWidth: "100%", boxShadow: "0 20px 60px rgba(0,0,0,.35)", animation: "wfy-in .2s ease" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
+          <Logo size={60} />
+          <div>
+            <div style={{ fontFamily: FSERIF, fontSize: 24, fontWeight: 800, color: C.ink, letterSpacing: -.5, lineHeight: 1.1 }}>We Fit You</div>
+            <div style={{ fontFamily: FSANS, fontSize: 12, color: C.inkMid, marginTop: 3 }}>Accesso staff · v36-estetica</div>
+          </div>
+        </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <Select label="Tu sei" value={staff} onChange={(e) => setStaff(e.target.value)}>
             {STAFF.map((s) => <option key={s}>{s}</option>)}
@@ -1226,7 +1271,7 @@ function DashboardPage({ store, staff, goToCalendar }) {
       </div>
 
       {/* Timeline di oggi */}
-      <SectionTitle right={<Btn variant="secondary" style={{ padding: "7px 14px", fontSize: 12 }} onClick={goToCalendar}>Apri calendario →</Btn>}>Oggi</SectionTitle>
+      <SectionTitle sub right={<Btn variant="secondary" style={{ padding: "7px 14px", fontSize: 12 }} onClick={goToCalendar}>Apri calendario →</Btn>}>Oggi</SectionTitle>
 
       {slotsToday.length === 0 ? (
         <Card><Empty icon="🗓️" text="Nessuna sessione in programma oggi. Aprine una dal calendario." /></Card>
@@ -1367,7 +1412,7 @@ function CalendarPage({ store, toast }) {
                   const pieno = occ.length >= posti;
                   const typeColor = (SESSION_TYPES[s.tipo] || SESSION_TYPES.gruppo).color;
                   return (
-                    <div key={s.id} style={{ border: `1px solid ${C.border}`, borderLeft: `4px solid ${typeColor}`, borderRadius: 10, padding: "8px 10px", animation: "wfy-in .18s ease" }}>
+                    <div key={s.id} style={{ border: `1px solid ${C.border}`, borderLeft: `4px solid ${typeColor}`, borderRadius: 10, padding: "9px 11px", animation: "wfy-in .18s ease" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
                         <span style={{ fontFamily: FSERIF, fontWeight: 800, fontSize: 15, color: C.ink }}>{s.time}</span>
                         <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -1382,27 +1427,28 @@ function CalendarPage({ store, toast }) {
                           )}
                         </span>
                       </div>
-                      {/* clienti prenotati (tap → modifica/sposta/elimina) */}
-                      {occ.length > 0 && (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+                      {/* clienti prenotati (tap → modifica/sposta/elimina) e, in
+                          coda, il tasto per aggiungerne uno */}
+                      {(occ.length > 0 || !pieno) && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 7 }}>
                           {occ.map((b) => {
                             const cli = clientePerId.get(b.clienteId);
                             const cert = certDaSegnalare(cli);
                             return (
                               <button key={b.id} onClick={() => setEditBooking({ booking: b, slot: s })}
-                                style={{ fontFamily: FSANS, fontSize: 12, background: C.bg, color: C.ink, border: `1px solid ${cert ? cert.colore : C.border}`, borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>
+                                style={{ fontFamily: FSANS, fontSize: 12.5, fontWeight: 500, background: C.bg, color: C.ink, border: `1px solid ${cert ? cert.colore : C.border}`, borderRadius: 7, padding: "4px 9px", cursor: "pointer" }}>
                                 <SegnoCertificato cliente={cli} />
                                 {nomeConIniziale(nomeCliente(b))}
                               </button>
                             );
                           })}
+                          {!pieno && (
+                            <button className="wfy-chip-add" onClick={() => setBookingFor(s)}
+                              style={{ fontFamily: FSANS, fontSize: 12.5, fontWeight: 600, background: "transparent", color: C.inkMid, border: `1px dashed ${C.inkFaint}`, borderRadius: 7, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>
+                              + Prenota
+                            </button>
+                          )}
                         </div>
-                      )}
-                      {!pieno && (
-                        <button onClick={() => setBookingFor(s)}
-                          style={{ marginTop: 8, width: "100%", background: C.ink, color: C.yellow, border: "none", borderRadius: 8, padding: "6px 0", fontSize: 12, fontWeight: 600, fontFamily: FSANS, cursor: "pointer" }}>
-                          + Prenota
-                        </button>
                       )}
                     </div>
                   );
@@ -1832,7 +1878,15 @@ function ClientiPage({ store, toast }) {
 
   return (
     <div>
-      <SectionTitle right={<Badge color={C.inkMid} bg={C.bg}>{state.clienti.length} in archivio</Badge>}>Clienti</SectionTitle>
+      <SectionTitle right={(() => {
+        const tot = state.clienti.length;
+        const pagati = state.clienti.filter((c) => haPagato(c, 0)).length;
+        return (
+          <span style={{ fontFamily: FSANS, fontSize: 12.5, color: C.inkMid }}>
+            {tot} in archivio · <strong style={{ color: pagati === tot && tot > 0 ? C.green : C.ink }}>{pagati}</strong> hanno pagato
+          </span>
+        );
+      })()}>Clienti</SectionTitle>
 
       {/* barra ricerca + nuovo */}
       <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
@@ -1842,28 +1896,19 @@ function ClientiPage({ store, toast }) {
         <Btn onClick={() => setCreating(true)}>+ Nuovo</Btn>
       </div>
 
-      {/* filtri + riepilogo mese */}
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 20, flexWrap: "wrap" }}>
+      {/* filtri: una fila sola che scorre di lato */}
+      <div className="wfy-filtri" style={{ marginBottom: 16 }}>
         <Pill active={soloNonPagati} onClick={() => setSoloNonPagati((v) => !v)}>
-          {soloNonPagati ? "✓ Solo da pagare" : "Mostra solo da pagare"}
+          {soloNonPagati ? "✓ " : ""}Da pagare
         </Pill>
         <Pill active={soloCertScaduto} onClick={() => setSoloCertScaduto((v) => !v)}>
-          {soloCertScaduto ? "✓ Solo certificato da rinnovare" : "Certificato da rinnovare"}
+          {soloCertScaduto ? "✓ " : ""}Certificato da rinnovare
         </Pill>
         {CATEGORIE.map((cat) => (
           <Pill key={cat} active={filtroCat === cat} onClick={() => setFiltroCat((v) => (v === cat ? "" : cat))}>
             {filtroCat === cat ? "✓ " : ""}{cat}
           </Pill>
         ))}
-        {(() => {
-          const tot = state.clienti.length;
-          const pagati = state.clienti.filter((c) => haPagato(c, 0)).length;
-          return (
-            <span style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid }}>
-              <strong style={{ color: pagati === tot && tot > 0 ? C.green : C.ink }}>{pagati}</strong> su {tot} hanno pagato
-            </span>
-          );
-        })()}
       </div>
 
       {list.length === 0 ? (
@@ -1876,28 +1921,34 @@ function ClientiPage({ store, toast }) {
             const pagatoPrec = haPagato(c, -1);
             const cert = statoCertificato(c.certificato);
             return (
-              <Card key={c.id} style={{ animation: "wfy-in .18s ease" }}>
+              <Card key={c.id} style={{ animation: "wfy-in .18s ease", padding: 16 }}>
                 <div onClick={() => setEdit(c)} style={{ cursor: "pointer" }}>
-                  <div style={{ fontFamily: FSERIF, fontSize: 18, fontWeight: 800, color: C.ink, marginBottom: 6 }}>
-                    {c.nome} {c.cognome}
-                  </div>
-                  {c.telefono && <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid, marginBottom: 3 }}>📞 {c.telefono}</div>}
-                  {c.email && <div style={{ fontFamily: FSANS, fontSize: 13, color: C.inkMid, marginBottom: 3 }}>✉️ {c.email}</div>}
-                  {c.note && <div style={{ fontFamily: FSANS, fontSize: 12, color: C.amber, marginTop: 6, lineHeight: 1.4 }}>⚕️ {c.note}</div>}
-                  <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {/* nome e categoria sulla stessa riga */}
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                    <div style={{ fontFamily: FSERIF, fontSize: 16.5, fontWeight: 700, color: C.ink, lineHeight: 1.25, minWidth: 0 }}>
+                      {c.nome} {c.cognome}
+                    </div>
                     {c.categoria && (() => {
                       const col = COL_CATEGORIA[c.categoria] || COL_CATEGORIA.Inattivo;
                       return <Badge color={col.colore} bg={col.bg}>{c.categoria}</Badge>;
                     })()}
-                    <Badge color={n > 0 ? C.green : C.inkFaint} bg={n > 0 ? C.greenSoft : C.bg}>
-                      {n} {n === 1 ? "prenotazione" : "prenotazioni"}
-                    </Badge>
-                    <Badge color={cert.colore} bg={cert.bg}>
-                      {cert.stato === "valido" ? "✓" : "⚠️"} Certificato
-                    </Badge>
                   </div>
-                  <div style={{ fontFamily: FSANS, fontSize: 11.5, color: cert.colore, marginTop: 6, fontWeight: 600 }}>
-                    {cert.label}
+                  {(c.telefono || c.email) && (
+                    <div style={{ fontFamily: FSANS, fontSize: 12.5, color: C.inkMid, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {[c.telefono, c.email].filter(Boolean).join(" · ")}
+                    </div>
+                  )}
+                  {c.note && <div style={{ fontFamily: FSANS, fontSize: 12, color: C.amber, marginTop: 5, lineHeight: 1.4 }}>{c.note}</div>}
+                  {/* certificato: un pallino e una frase; a destra gli appuntamenti */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 10, fontFamily: FSANS, fontSize: 12.5 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: cert.colore, flexShrink: 0 }} />
+                    <span style={{ color: cert.stato === "valido" ? C.inkMid : cert.colore, fontWeight: cert.stato === "valido" ? 500 : 700, flex: 1, minWidth: 0 }}>
+                      {cert.stato === "valido" ? "Certificato valido" : cert.stato === "assente" ? "Certificato mancante" : "Certificato"}
+                      {cert.stato === "scaduto" && ` scaduto il ${fmtShort(c.certificato)}`}
+                      {cert.stato === "inScadenza" && ` in scadenza il ${fmtShort(c.certificato)}`}
+                      {cert.stato === "valido" && ` fino al ${fmtShort(c.certificato)}`}
+                    </span>
+                    <span style={{ color: C.inkFaint, whiteSpace: "nowrap" }}>{n} app.</span>
                   </div>
                 </div>
                 {/* spunte pagamento: mese corrente e mese scorso */}
@@ -1911,9 +1962,9 @@ function ClientiPage({ store, toast }) {
                           : `${c.nome} — ${m.lab.toLowerCase()}: pagamento rimosso`);
                       }}
                       style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                        background: m.on ? C.greenSoft : C.bg, border: `1.5px solid ${m.on ? C.green : C.border}`,
-                        color: m.on ? C.green : C.inkMid, borderRadius: 10, padding: "9px 8px", cursor: "pointer",
-                        fontFamily: FSANS, fontWeight: 700, fontSize: 12, lineHeight: 1.2 }}>
+                        background: m.on ? C.greenSoft : C.white, border: `1.5px solid ${m.on ? C.green : C.border}`,
+                        color: m.on ? C.green : C.inkMid, borderRadius: 9, padding: "8px 8px", cursor: "pointer",
+                        fontFamily: FSANS, fontWeight: 600, fontSize: 12.5, lineHeight: 1.2 }}>
                       {m.on ? "✓" : "○"} {m.lab}
                     </button>
                   ))}
@@ -2300,7 +2351,7 @@ function StatistichePage({ store }) {
       </div>
 
       {/* ── clienti per categoria ── */}
-      <SectionTitle>Clienti per categoria</SectionTitle>
+      <SectionTitle sub>Clienti per categoria</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10, marginBottom: 24 }}>
         {dati.categorie.map((cat) => {
           const col = COL_CATEGORIA[cat.nome] || COL_CATEGORIA.Inattivo;
@@ -2319,7 +2370,7 @@ function StatistichePage({ store }) {
         )}
       </div>
 
-      <SectionTitle>Attività</SectionTitle>
+      <SectionTitle sub>Attività</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 24 }}>
         {stat("Presenze totali", dati.totSedute)}
         {stat("Clienti attivi", dati.attivi)}
@@ -2328,7 +2379,7 @@ function StatistichePage({ store }) {
       </div>
 
       {/* ── andamento mensile ── */}
-      <SectionTitle>Andamento mensile</SectionTitle>
+      <SectionTitle sub>Andamento mensile</SectionTitle>
       <Card style={{ marginBottom: 24 }}>
         {dati.totSedute === 0 ? <Empty icon="📊" text="Nessuna seduta registrata." /> : (
           <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 150, marginTop: 4 }}>
@@ -2348,7 +2399,7 @@ function StatistichePage({ store }) {
       </Card>
 
       {/* ── presenze per orario (numeri assoluti) ── */}
-      <SectionTitle>Presenze per orario</SectionTitle>
+      <SectionTitle sub>Presenze per orario</SectionTitle>
       <Card style={{ marginBottom: 24 }}>
         {dati.orari.length === 0 ? <Empty icon="🕐" text="Nessuna presenza registrata." /> : (
           <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 160, marginTop: 4, overflowX: "auto" }}>
@@ -2366,7 +2417,7 @@ function StatistichePage({ store }) {
       </Card>
 
       {/* ── presenze per fascia della giornata ── */}
-      <SectionTitle>Presenze per fascia</SectionTitle>
+      <SectionTitle sub>Presenze per fascia</SectionTitle>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 24 }}>
         {dati.fasceGiorno.map((f) => {
           const perc = dati.totSedute > 0 ? Math.round((f.n / dati.totSedute) * 100) : 0;
@@ -2384,7 +2435,7 @@ function StatistichePage({ store }) {
       </div>
 
       {/* ── media presenze per giorno della settimana ── */}
-      <SectionTitle>Media presenze per giorno</SectionTitle>
+      <SectionTitle sub>Media presenze per giorno</SectionTitle>
       <div style={{ fontFamily: FSANS, fontSize: 11.5, color: C.inkFaint, marginBottom: 8 }}>
         Media per giornata di apertura · accanto, quante giornate sono state conteggiate
       </div>
@@ -2393,7 +2444,7 @@ function StatistichePage({ store }) {
       </Card>
 
       {/* ── griglia giorno × orario ── */}
-      <SectionTitle>Giorno per orario</SectionTitle>
+      <SectionTitle sub>Giorno per orario</SectionTitle>
       <div style={{ fontFamily: FSANS, fontSize: 11.5, color: C.inkFaint, marginBottom: 8 }}>
         Media di presenze per sessione, e sotto su quante sessioni è calcolata · più scuro = più frequentato
       </div>
@@ -2433,7 +2484,7 @@ function StatistichePage({ store }) {
       </Card>
 
       {/* ── classifica degli orari più frequentati ── */}
-      <SectionTitle>Orari più frequentati</SectionTitle>
+      <SectionTitle sub>Orari più frequentati</SectionTitle>
       <div style={{ fontFamily: FSANS, fontSize: 11.5, color: C.inkFaint, marginBottom: 8 }}>
         Presenze totali per orario, dal più frequentato
       </div>
@@ -2442,7 +2493,7 @@ function StatistichePage({ store }) {
       </Card>
 
       {/* ── classifica clienti ── */}
-      <SectionTitle>Clienti per frequenza</SectionTitle>
+      <SectionTitle sub>Clienti per frequenza</SectionTitle>
       {dati.classifica.length === 0 ? (
         <Card><Empty icon="👥" text="Nessuna presenza registrata." /></Card>
       ) : (
@@ -2476,10 +2527,10 @@ function StatistichePage({ store }) {
 /* ═══════════════════════════ app root ═════════════════════════════════════ */
 
 const NAV = [
-  { id: "dashboard", icon: "🏠", label: "Home" },
-  { id: "calendario", icon: "📅", label: "Calendario" },
-  { id: "clienti", icon: "👥", label: "Clienti" },
-  { id: "statistiche", icon: "📊", label: "Statistiche" },
+  { id: "dashboard", icon: "home", label: "Home" },
+  { id: "calendario", icon: "calendario", label: "Calendario" },
+  { id: "clienti", icon: "clienti", label: "Clienti" },
+  { id: "statistiche", icon: "statistiche", label: "Statistiche" },
 ];
 
 export default function App() {
@@ -2506,30 +2557,42 @@ export default function App() {
       {/* Sidebar desktop */}
       {!mobile && (
         <aside style={{ width: 220, background: C.dark, minHeight: "100vh", display: "flex", flexDirection: "column", padding: "30px 14px", boxSizing: "border-box", flexShrink: 0 }}>
-          <div style={{ marginBottom: 26, paddingBottom: 22, borderBottom: "1px solid #2a2a2a" }}>
-            <div style={{ fontFamily: FSERIF, fontSize: 22, fontWeight: 800, color: C.yellow, letterSpacing: -.5, lineHeight: 1.05 }}>We Fit You</div>
-            <div style={{ fontFamily: FSANS, fontSize: 11, color: "#666", marginTop: 6 }}>👤 {staff}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid #2a2a2a" }}>
+            <Logo size={44} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: FSERIF, fontSize: 16, fontWeight: 700, color: "#fff", letterSpacing: -.2, lineHeight: 1.15 }}>We Fit You</div>
+              <div style={{ fontFamily: FSANS, fontSize: 11.5, color: "#8a8a8a", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{staff}</div>
+            </div>
           </div>
           <nav style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
             {NAV.map((n) => (
               <button key={n.id} onClick={() => setTab(n.id)} style={{
-                background: tab === n.id ? C.yellow : "transparent", color: tab === n.id ? C.ink : "#999",
+                background: tab === n.id ? C.yellow : "transparent", color: tab === n.id ? C.ink : "#a8a8a8",
                 border: "none", borderRadius: 10, padding: "11px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600,
                 fontFamily: FSANS, display: "flex", alignItems: "center", gap: 10, textAlign: "left", transition: "all .15s",
               }}>
-                <span style={{ fontSize: 16 }}>{n.icon}</span>{n.label}
+                <Icona nome={n.icon} size={18} />{n.label}
               </button>
             ))}
           </nav>
-          <button onClick={() => setStaff(null)} style={{ background: "transparent", border: "1px solid #2a2a2a", borderRadius: 10, color: "#777", padding: "9px 14px", cursor: "pointer", fontSize: 12, fontFamily: FSANS }}>Esci</button>
+          <button onClick={() => setStaff(null)} style={{ background: "transparent", border: "1px solid #2a2a2a", borderRadius: 10, color: "#a8a8a8", padding: "9px 14px", cursor: "pointer", fontSize: 12, fontFamily: FSANS }}>Esci</button>
         </aside>
       )}
 
       {/* Contenuto */}
-      <main style={{ flex: 1, padding: mobile ? "20px 16px 96px" : "34px 36px", overflowY: "auto", maxWidth: mobile ? "100%" : 1000, width: "100%" }}>
+      <main style={{ flex: 1, padding: mobile ? "14px 14px 96px" : "30px 36px", overflowY: "auto", maxWidth: mobile ? "100%" : 1000, width: "100%" }}>
+        {mobile && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+            <Logo size={34} />
+            <div style={{ flex: 1, minWidth: 0, fontFamily: FSERIF, fontSize: 15, fontWeight: 700, color: C.ink }}>We Fit You</div>
+            <span style={{ fontFamily: FSANS, fontSize: 12.5, color: C.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 110 }}>{staff}</span>
+            <button onClick={() => setStaff(null)}
+              style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, color: C.inkMid, padding: "6px 10px", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: FSANS }}>Esci</button>
+          </div>
+        )}
         {store.loading ? (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "60vh", gap: 12, color: C.inkFaint }}>
-            <div style={{ fontFamily: FSERIF, fontSize: 22, fontWeight: 800, color: C.yellow }}>We Fit You</div>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "60vh", gap: 14, color: C.inkMid }}>
+            <Logo size={64} />
             <div style={{ fontFamily: FSANS, fontSize: 13 }}>Sincronizzazione in corso…</div>
           </div>
         ) : (
@@ -2546,9 +2609,9 @@ export default function App() {
       {mobile && (
         <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.dark, display: "flex", zIndex: 100, borderTop: "1px solid #2a2a2a", padding: "8px 0 calc(8px + env(safe-area-inset-bottom))" }}>
           {NAV.map((n) => (
-            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", cursor: "pointer", color: tab === n.id ? C.yellow : "#888", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "4px 0", fontFamily: FSANS }}>
-              <span style={{ fontSize: 16 }}>{n.icon}</span>
-              <span style={{ fontSize: 9, fontWeight: 600 }}>{n.label}</span>
+            <button key={n.id} onClick={() => setTab(n.id)} style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", cursor: "pointer", color: tab === n.id ? C.yellow : "#a8a8a8", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "5px 0 3px", fontFamily: FSANS }}>
+              <Icona nome={n.icon} size={22} />
+              <span style={{ fontSize: 10.5, fontWeight: 600 }}>{n.label}</span>
             </button>
           ))}
         </nav>
